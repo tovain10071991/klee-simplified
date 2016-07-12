@@ -72,11 +72,6 @@ namespace {
 		       cl::desc("Enable tracking of time for individual instructions (default=off)"));
 
   cl::opt<bool>
-  OutputStats("output-stats",
-              cl::init(true),
-	      cl::desc("Write running stats trace file (default=on)"));
-
-  cl::opt<bool>
   OutputIStats("output-istats",
 	       cl::init(true),
                cl::desc("Write instruction level statistics in callgrind format (default=on)"));
@@ -85,11 +80,6 @@ namespace {
   StatsWriteInterval("stats-write-interval",
                      cl::init(1.),
 		     cl::desc("Approximate number of seconds between stats writes (default=1.0s)"));
-
-  cl::opt<unsigned> StatsWriteAfterInstructions(
-      "stats-write-after-instructions", cl::init(0),
-      cl::desc("Write statistics after each n instructions, 0 to disable "
-               "(default=0)"));
 
   cl::opt<double>
   IStatsWriteInterval("istats-write-interval",
@@ -117,7 +107,7 @@ namespace {
 ///
 
 bool StatsTracker::useStatistics() {
-  return OutputStats || OutputIStats;
+  return OutputIStats;
 }
 
 namespace klee {
@@ -189,17 +179,6 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     partialBranches(0),
     updateMinDistToUncovered(_updateMinDistToUncovered) {
 
-  if (StatsWriteAfterInstructions > 0 && StatsWriteInterval > 0)
-    klee_error("Both options --stats-write-interval and "
-               "--stats-write-after-instructions cannot be enabled at the same "
-               "time.");
-
-  if (IStatsWriteAfterInstructions > 0 && IStatsWriteInterval > 0)
-    klee_error(
-        "Both options --istats-write-interval and "
-        "--istats-write-after-instructions cannot be enabled at the same "
-        "time.");
-
   KModule *km = executor.kmodule;
 
   if (!sys::path::is_absolute(objectFilename)) {
@@ -207,12 +186,8 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     if(sys::fs::make_absolute(current)) {
       bool exists = false;
 
-#if LLVM_VERSION_CODE < LLVM_VERSION(3, 5)
       error_code ec = sys::fs::exists(current.str(), exists);
       if (ec == errc::success && exists) {
-#else
-      if (!sys::fs::exists(current.str(), exists)) {
-#endif
         objectFilename = current.c_str();
       }
     }
@@ -242,16 +217,6 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
             numBranches++;
       }
     }
-  }
-
-  if (OutputStats) {
-    statsFile = executor.interpreterHandler->openOutputFile("run.stats");
-    assert(statsFile && "unable to open statistics trace file");
-    writeStatsHeader();
-    writeStatsLine();
-
-    if (StatsWriteInterval > 0)
-      executor.addTimer(new WriteStatsTimer(this), StatsWriteInterval);
   }
 
   // Add timer to calculate uncovered instructions if needed by the solver
@@ -332,10 +297,6 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
       }
     }
   }
-
-  if (statsFile && StatsWriteAfterInstructions &&
-      stats::instructions % StatsWriteAfterInstructions.getValue() == 0)
-    writeStatsLine();
 
   if (istatsFile && IStatsWriteAfterInstructions &&
       stats::instructions % IStatsWriteAfterInstructions.getValue() == 0)

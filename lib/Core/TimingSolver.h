@@ -24,7 +24,6 @@ namespace klee {
   class TimingSolver {
   public:
     Solver *solver;
-    bool simplifyExprs;
 
   public:
     /// TimingSolver - Construct a new timing solver.
@@ -32,8 +31,8 @@ namespace klee {
     /// \param _simplifyExprs - Whether expressions should be
     /// simplified (via the constraint manager interface) prior to
     /// querying.
-    TimingSolver(Solver *_solver, bool _simplifyExprs = true) 
-      : solver(_solver), simplifyExprs(_simplifyExprs) {}
+    TimingSolver(Solver *_solver) 
+      : solver(_solver) {}
     ~TimingSolver() {
       delete solver;
     }

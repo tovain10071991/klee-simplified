@@ -177,11 +177,6 @@ namespace {
                      cl::init(false),
 		     cl::desc("Simplify symbolic accesses using equalities from other constraints (default=off)"));
 
-  cl::opt<bool>
-  EqualitySubstitution("equality-substitution",
-		       cl::init(true),
-		       cl::desc("Simplify equality expressions before querying the solver (default=on)."));
-
   cl::opt<unsigned>
   MaxSymArraySize("max-sym-array-size",
                   cl::init(0));
@@ -314,55 +309,17 @@ Executor::Executor(const InterpreterOptions &opts, InterpreterHandler *ih)
       processTree(0), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false),
-      coreSolverTimeout(MaxCoreSolverTime != 0 && MaxInstructionTime != 0
-                            ? std::min(MaxCoreSolverTime, MaxInstructionTime)
-                            : std::max(MaxCoreSolverTime, MaxInstructionTime)),
+      coreSolverTimeout(0),
       debugInstFile(0), debugLogBuffer(debugBufferString) {
 
-  if (coreSolverTimeout) UseForkedCoreSolver = true;
-  Solver *coreSolver = klee::createCoreSolver(CoreSolverToUse);
-  if (!coreSolver) {
+  Solver *solver = klee::createCoreSolver(CoreSolverToUse);
+  if (!solver) {
     llvm::errs() << "Failed to create core solver\n";
     exit(1);
   }
-  Solver *solver = constructSolverChain(
-      coreSolver,
-      interpreterHandler->getOutputFilename(ALL_QUERIES_SMT2_FILE_NAME),
-      interpreterHandler->getOutputFilename(SOLVER_QUERIES_SMT2_FILE_NAME),
-      interpreterHandler->getOutputFilename(ALL_QUERIES_PC_FILE_NAME),
-      interpreterHandler->getOutputFilename(SOLVER_QUERIES_PC_FILE_NAME));
 
-  this->solver = new TimingSolver(solver, EqualitySubstitution);
+  this->solver = new TimingSolver(solver);
   memory = new MemoryManager(&arrayCache);
-
-  if (optionIsSet(DebugPrintInstructions, FILE_ALL) ||
-      optionIsSet(DebugPrintInstructions, FILE_COMPACT) ||
-      optionIsSet(DebugPrintInstructions, FILE_SRC)) {
-    std::string debug_file_name =
-        interpreterHandler->getOutputFilename("instructions.txt");
-    std::string ErrorInfo;
-#ifdef HAVE_ZLIB_H
-    if (!DebugCompressInstructions) {
-#endif
-
-#if LLVM_VERSION_CODE >= LLVM_VERSION(3, 5)
-    debugInstFile = new llvm::raw_fd_ostream(debug_file_name.c_str(), ErrorInfo,
-                                             llvm::sys::fs::OpenFlags::F_Text),
-#else
-    debugInstFile =
-        new llvm::raw_fd_ostream(debug_file_name.c_str(), ErrorInfo);
-#endif
-#ifdef HAVE_ZLIB_H
-    } else {
-      debugInstFile = new compressed_fd_ostream(
-          (debug_file_name + ".gz").c_str(), ErrorInfo);
-    }
-#endif
-    if (ErrorInfo != "") {
-      klee_error("Could not open file %s : %s", debug_file_name.c_str(),
-                 ErrorInfo.c_str());
-    }
-  }
 }
 
 
@@ -373,11 +330,7 @@ const Module *Executor::setModule(llvm::Module *module,
   kmodule = new KModule(module);
 
   // Initialize the context.
-#if LLVM_VERSION_CODE <= LLVM_VERSION(3, 1)
-  TargetData *TD = kmodule->targetData;
-#else
   DataLayout *TD = kmodule->targetData;
-#endif
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width) TD->getPointerSizeInBits());
 
@@ -387,7 +340,7 @@ const Module *Executor::setModule(llvm::Module *module,
   kmodule->prepare(opts, interpreterHandler);
   specialFunctionHandler->bind();
 
-  if (StatsTracker::useStatistics() || userSearcherRequiresMD2U()) {
+  if (StatsTracker::useStatistics()) {
     statsTracker = 
       new StatsTracker(*this,
                        interpreterHandler->getOutputFilename("assembly.ll"),
@@ -1117,8 +1070,7 @@ Executor::toConstant(ExecutionState &state,
   std::string str;
   llvm::raw_string_ostream os(str);
   os << "silently concretizing (reason: " << reason << ") expression " << e
-     << " to value " << value << " (" << (*(state.pc)).info->file << ":"
-     << (*(state.pc)).info->line << ")";
+     << " to value " << value << " (want to drop)";
 
   if (AllExternalWarnings)
     klee_warning(reason, os.str().c_str());
@@ -1173,41 +1125,7 @@ void Executor::executeGetValue(ExecutionState &state,
   }
 }
 
-void Executor::printDebugInstructions(ExecutionState &state) {
-  // check do not print
-  if (DebugPrintInstructions.size() == 0)
-	  return;
-
-  llvm::raw_ostream *stream = 0;
-  if (optionIsSet(DebugPrintInstructions, STDERR_ALL) ||
-      optionIsSet(DebugPrintInstructions, STDERR_SRC) ||
-      optionIsSet(DebugPrintInstructions, STDERR_COMPACT))
-    stream = &llvm::errs();
-  else
-    stream = &debugLogBuffer;
-
-  if (!optionIsSet(DebugPrintInstructions, STDERR_COMPACT) &&
-      !optionIsSet(DebugPrintInstructions, FILE_COMPACT))
-    printFileLine(state, state.pc, *stream);
-
-  (*stream) << state.pc->info->id;
-
-  if (optionIsSet(DebugPrintInstructions, STDERR_ALL) ||
-      optionIsSet(DebugPrintInstructions, FILE_ALL))
-    (*stream) << ":" << *(state.pc->inst);
-  (*stream) << "\n";
-
-  if (optionIsSet(DebugPrintInstructions, FILE_ALL) ||
-      optionIsSet(DebugPrintInstructions, FILE_COMPACT) ||
-      optionIsSet(DebugPrintInstructions, FILE_SRC)) {
-    debugLogBuffer.flush();
-    (*debugInstFile) << debugLogBuffer.str();
-    debugBufferString = "";
-  }
-}
-
 void Executor::stepInstruction(ExecutionState &state) {
-  printDebugInstructions(state);
   if (statsTracker)
     statsTracker->stepInstruction(state);
 
@@ -1415,10 +1333,6 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
 
 void Executor::printFileLine(ExecutionState &state, KInstruction *ki,
                              llvm::raw_ostream &debugFile) {
-  const InstructionInfo &ii = *ki->info;
-  if (ii.file != "")
-    debugFile << "     " << ii.file << ":" << ii.line << ":";
-  else
     debugFile << "     [no debug info]:";
 }
 
@@ -2814,8 +2728,6 @@ void Executor::terminateState(ExecutionState &state) {
                       "replay did not consume all objects in test input.");
   }
 
-  interpreterHandler->incPathsExplored();
-
   std::vector<ExecutionState *>::iterator it =
       std::find(addedStates.begin(), addedStates.end(), &state);
   if (it==addedStates.end()) {
@@ -2836,99 +2748,17 @@ void Executor::terminateState(ExecutionState &state) {
 
 void Executor::terminateStateEarly(ExecutionState &state, 
                                    const Twine &message) {
-  if (!OnlyOutputStatesCoveringNew || state.coveredNew ||
-      (AlwaysOutputSeeds && seedMap.count(&state)))
-    interpreterHandler->processTestCase(state, (message + "\n").str().c_str(),
-                                        "early");
   terminateState(state);
 }
 
 void Executor::terminateStateOnExit(ExecutionState &state) {
-  if (!OnlyOutputStatesCoveringNew || state.coveredNew || 
-      (AlwaysOutputSeeds && seedMap.count(&state)))
-    interpreterHandler->processTestCase(state, 0, 0);
   terminateState(state);
 }
 
-const InstructionInfo & Executor::getLastNonKleeInternalInstruction(const ExecutionState &state,
-    Instruction ** lastInstruction) {
-  // unroll the stack of the applications state and find
-  // the last instruction which is not inside a KLEE internal function
-  ExecutionState::stack_ty::const_reverse_iterator it = state.stack.rbegin(),
-      itE = state.stack.rend();
-
-  // don't check beyond the outermost function (i.e. main())
-  itE--;
-
-  const InstructionInfo * ii = 0;
-  if (kmodule->internalFunctions.count(it->kf->function) == 0){
-    ii =  state.prevPC->info;
-    *lastInstruction = state.prevPC->inst;
-    //  Cannot return yet because even though
-    //  it->function is not an internal function it might of
-    //  been called from an internal function.
-  }
-
-  // Wind up the stack and check if we are in a KLEE internal function.
-  // We visit the entire stack because we want to return a CallInstruction
-  // that was not reached via any KLEE internal functions.
-  for (;it != itE; ++it) {
-    // check calling instruction and if it is contained in a KLEE internal function
-    const Function * f = (*it->caller).inst->getParent()->getParent();
-    if (kmodule->internalFunctions.count(f)){
-      ii = 0;
-      continue;
-    }
-    if (!ii){
-      ii = (*it->caller).info;
-      *lastInstruction = (*it->caller).inst;
-    }
-  }
-
-  if (!ii) {
-    // something went wrong, play safe and return the current instruction info
-    *lastInstruction = state.prevPC->inst;
-    return *state.prevPC->info;
-  }
-  return *ii;
-}
 void Executor::terminateStateOnError(ExecutionState &state,
                                      const llvm::Twine &messaget,
                                      const char *suffix,
                                      const llvm::Twine &info) {
-  std::string message = messaget.str();
-  static std::set< std::pair<Instruction*, std::string> > emittedErrors;
-  Instruction * lastInst;
-  const InstructionInfo &ii = getLastNonKleeInternalInstruction(state, &lastInst);
-  
-  if (EmitAllErrors ||
-      emittedErrors.insert(std::make_pair(lastInst, message)).second) {
-    if (ii.file != "") {
-      klee_message("ERROR: %s:%d: %s", ii.file.c_str(), ii.line, message.c_str());
-    } else {
-      klee_message("ERROR: (location information missing) %s", message.c_str());
-    }
-    if (!EmitAllErrors)
-      klee_message("NOTE: now ignoring this error at this location");
-
-    std::string MsgString;
-    llvm::raw_string_ostream msg(MsgString);
-    msg << "Error: " << message << "\n";
-    if (ii.file != "") {
-      msg << "File: " << ii.file << "\n";
-      msg << "Line: " << ii.line << "\n";
-      msg << "assembly.ll line: " << ii.assemblyLine << "\n";
-    }
-    msg << "Stack: \n";
-    state.dumpStack(msg);
-
-    std::string info_str = info.str();
-    if (info_str != "")
-      msg << "Info: \n" << info_str;
-
-    interpreterHandler->processTestCase(state, msg.str().c_str(), suffix);
-  }
-    
   terminateState(state);
 }
 

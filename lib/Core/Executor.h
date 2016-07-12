@@ -357,11 +357,6 @@ private:
   /// Get textual information regarding a memory address.
   std::string getAddressInfo(ExecutionState &state, ref<Expr> address) const;
 
-  // Determines the \param lastInstruction of the \param state which is not KLEE
-  // internal and returns its InstructionInfo
-  const InstructionInfo & getLastNonKleeInternalInstruction(const ExecutionState &state,
-      llvm::Instruction** lastInstruction);
-
   // remove state from queue and delete
   void terminateState(ExecutionState &state);
   // call exit handler and terminate state
@@ -411,7 +406,6 @@ private:
   void processTimers(ExecutionState *current,
                      double maxInstTime);
   void checkMemoryUsage();
-  void printDebugInstructions(ExecutionState &state);
   void doDumpStates();
 
 public:

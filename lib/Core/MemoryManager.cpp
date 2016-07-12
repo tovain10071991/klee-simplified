@@ -21,10 +21,6 @@
 using namespace klee;
 
 namespace {
-llvm::cl::opt<bool> DeterministicAllocation(
-    "allocate-determ",
-    llvm::cl::desc("Allocate memory deterministically(default=off)"),
-    llvm::cl::init(false));
 
 llvm::cl::opt<unsigned> DeterministicAllocationSize(
     "allocate-determ-size",
@@ -55,38 +51,16 @@ llvm::cl::opt<unsigned long long> DeterministicStartAddress(
 MemoryManager::MemoryManager(ArrayCache *_arrayCache)
     : arrayCache(_arrayCache), deterministicSpace(0), nextFreeSlot(0),
       spaceSize(DeterministicAllocationSize.getValue() * 1024 * 1024) {
-  if (DeterministicAllocation) {
-    // Page boundary
-    void *expectedAddress = (void *)DeterministicStartAddress.getValue();
-
-    char *newSpace =
-        (char *)mmap(expectedAddress, spaceSize, PROT_READ | PROT_WRITE,
-                     MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-
-    if (newSpace == MAP_FAILED) {
-      klee_error("Couldn't mmap() memory for deterministic allocations");
-    }
-    if (expectedAddress != newSpace && expectedAddress != 0) {
-      klee_error("Could not allocate memory deterministically");
-    }
-
-    klee_message("Deterministic memory allocation starting from %p", newSpace);
-    deterministicSpace = newSpace;
-    nextFreeSlot = newSpace;
-  }
 }
 
 MemoryManager::~MemoryManager() {
   while (!objects.empty()) {
     MemoryObject *mo = *objects.begin();
-    if (!mo->isFixed && !DeterministicAllocation)
+    if (!mo->isFixed)
       free((void *)mo->address);
     objects.erase(mo);
     delete mo;
   }
-
-  if (DeterministicAllocation)
-    munmap(deterministicSpace, spaceSize);
 }
 
 MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
@@ -107,33 +81,15 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
   }
 
   uint64_t address = 0;
-  if (DeterministicAllocation) {
 
-    address = llvm::RoundUpToAlignment((uint64_t)nextFreeSlot + alignment - 1,
-                                       alignment);
-
-    // Handle the case of 0-sized allocations as 1-byte allocations.
-    // This way, we make sure we have this allocation between its own red zones
-    size_t alloc_size = std::max(size, (uint64_t)1);
-    if ((char *)address + alloc_size < deterministicSpace + spaceSize) {
-      nextFreeSlot = (char *)address + alloc_size + RedZoneSpace;
-    } else {
-      klee_warning_once(
-          0,
-          "Couldn't allocate %lu bytes. Not enough deterministic space left.",
-          size);
+  // Use malloc for the standard case
+  if (alignment <= 8)
+    address = (uint64_t)malloc(size);
+  else {
+    int res = posix_memalign((void **)&address, alignment, size);
+    if (res < 0) {
+      klee_warning("Allocating aligned memory failed.");
       address = 0;
-    }
-  } else {
-    // Use malloc for the standard case
-    if (alignment <= 8)
-      address = (uint64_t)malloc(size);
-    else {
-      int res = posix_memalign((void **)&address, alignment, size);
-      if (res < 0) {
-        klee_warning("Allocating aligned memory failed.");
-        address = 0;
-      }
     }
   }
 
@@ -169,7 +125,7 @@ void MemoryManager::deallocate(const MemoryObject *mo) { assert(0); }
 
 void MemoryManager::markFreed(MemoryObject *mo) {
   if (objects.find(mo) != objects.end()) {
-    if (!mo->isFixed && !DeterministicAllocation)
+    if (!mo->isFixed)
       free((void *)mo->address);
     objects.erase(mo);
   }

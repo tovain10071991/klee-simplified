@@ -34,9 +34,6 @@ bool TimingSolver::evaluate(const ExecutionState& state, ref<Expr> expr,
 
   sys::TimeValue now = util::getWallTimeVal();
 
-  if (simplifyExprs)
-    expr = state.constraints.simplifyExpr(expr);
-
   bool success = solver->evaluate(Query(state.constraints, expr), result);
 
   sys::TimeValue delta = util::getWallTimeVal();
@@ -56,9 +53,6 @@ bool TimingSolver::mustBeTrue(const ExecutionState& state, ref<Expr> expr,
   }
 
   sys::TimeValue now = util::getWallTimeVal();
-
-  if (simplifyExprs)
-    expr = state.constraints.simplifyExpr(expr);
 
   bool success = solver->mustBeTrue(Query(state.constraints, expr), result);
 
@@ -102,9 +96,6 @@ bool TimingSolver::getValue(const ExecutionState& state, ref<Expr> expr,
   }
   
   sys::TimeValue now = util::getWallTimeVal();
-
-  if (simplifyExprs)
-    expr = state.constraints.simplifyExpr(expr);
 
   bool success = solver->getValue(Query(state.constraints, expr), result);
 

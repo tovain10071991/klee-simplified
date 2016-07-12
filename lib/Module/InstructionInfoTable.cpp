@@ -112,9 +112,11 @@ bool InstructionInfoTable::getInstructionDebugInfo(const llvm::Instruction *I,
   return false;
 }
 
+static unsigned max_id = 0;
+
 InstructionInfoTable::InstructionInfoTable(Module *m) 
   : dummyString(""), dummyInfo(0, dummyString, 0, 0) {
-  unsigned id = 0;
+  unsigned id = max_id;
   std::map<const Instruction*, unsigned> lineTable;
   buildInstructionToLineMap(m, lineTable);
 
@@ -149,6 +151,7 @@ InstructionInfoTable::InstructionInfoTable(Module *m)
                                                   assemblyLine)));
     }
   }
+  max_id = id;
 }
 
 InstructionInfoTable::~InstructionInfoTable() {

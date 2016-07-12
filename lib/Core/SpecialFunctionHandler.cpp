@@ -474,7 +474,7 @@ void SpecialFunctionHandler::handleSetForking(ExecutionState &state,
 void SpecialFunctionHandler::handleStackTrace(ExecutionState &state,
                                               KInstruction *target,
                                               std::vector<ref<Expr> > &arguments) {
-  state.dumpStack(outs());
+  assert(0 && "unreachable");
 }
 
 void SpecialFunctionHandler::handleWarning(ExecutionState &state,

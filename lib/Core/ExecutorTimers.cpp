@@ -130,55 +130,6 @@ void Executor::processTimers(ExecutionState *current,
       dumpPTree = 0;
     }
 
-    if (dumpStates) {
-      llvm::raw_ostream *os = interpreterHandler->openOutputFile("states.txt");
-      
-      if (os) {
-        for (std::set<ExecutionState*>::const_iterator it = states.begin(), 
-               ie = states.end(); it != ie; ++it) {
-          ExecutionState *es = *it;
-          *os << "(" << es << ",";
-          *os << "[";
-          ExecutionState::stack_ty::iterator next = es->stack.begin();
-          ++next;
-          for (ExecutionState::stack_ty::iterator sfIt = es->stack.begin(),
-                 sf_ie = es->stack.end(); sfIt != sf_ie; ++sfIt) {
-            *os << "('" << sfIt->kf->function->getName().str() << "',";
-            if (next == es->stack.end()) {
-              *os << es->prevPC->info->line << "), ";
-            } else {
-              *os << next->caller->info->line << "), ";
-              ++next;
-            }
-          }
-          *os << "], ";
-
-          StackFrame &sf = es->stack.back();
-          uint64_t md2u = computeMinDistToUncovered(es->pc,
-                                                    sf.minDistToUncoveredOnReturn);
-          uint64_t icnt = theStatisticManager->getIndexedValue(stats::instructions,
-                                                               es->pc->info->id);
-          uint64_t cpicnt = sf.callPathNode->statistics.getValue(stats::instructions);
-
-          *os << "{";
-          *os << "'depth' : " << es->depth << ", ";
-          *os << "'weight' : " << es->weight << ", ";
-          *os << "'queryCost' : " << es->queryCost << ", ";
-          *os << "'coveredNew' : " << es->coveredNew << ", ";
-          *os << "'instsSinceCovNew' : " << es->instsSinceCovNew << ", ";
-          *os << "'md2u' : " << md2u << ", ";
-          *os << "'icnt' : " << icnt << ", ";
-          *os << "'CPicnt' : " << cpicnt << ", ";
-          *os << "}";
-          *os << ")\n";
-        }
-        
-        delete os;
-      }
-
-      dumpStates = 0;
-    }
-
     if (maxInstTime > 0 && current &&
         std::find(removedStates.begin(), removedStates.end(), current) ==
             removedStates.end()) {

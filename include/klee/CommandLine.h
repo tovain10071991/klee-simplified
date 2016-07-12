@@ -10,16 +10,6 @@
 #include "klee/Config/config.h"
 
 namespace klee {
-
-extern llvm::cl::opt<bool> UseFastCexSolver;
-
-extern llvm::cl::opt<bool> UseCexCache;
-
-extern llvm::cl::opt<bool> UseCache;
-
-extern llvm::cl::opt<bool> UseIndependentSolver; 
-
-extern llvm::cl::opt<bool> DebugValidateSolver;
   
 extern llvm::cl::opt<int> MinQueryTimeToLog;
 
@@ -37,12 +27,6 @@ enum QueryLoggingSolverType
     SOLVER_PC,    ///< Log queries passed to solver (optimised) in .pc (KQuery) format
     SOLVER_SMTLIB ///< Log queries passed to solver (optimised) in .smt2 (SMT-LIBv2) format
 };
-
-/* Using cl::list<> instead of cl::bits<> results in quite a bit of ugliness when it comes to checking
- * if an option is set. Unfortunately with gcc4.7 cl::bits<> is broken with LLVM2.9 and I doubt everyone
- * wants to patch their copy of LLVM just for these options.
- */
-extern llvm::cl::list<QueryLoggingSolverType> queryLoggingOptions;
 
 enum CoreSolverType { STP_SOLVER, METASMT_SOLVER, DUMMY_SOLVER, Z3_SOLVER };
 extern llvm::cl::opt<CoreSolverType> CoreSolverToUse;
