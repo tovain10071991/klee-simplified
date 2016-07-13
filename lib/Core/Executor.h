@@ -113,7 +113,7 @@ private:
   MemoryManager *memory;
   std::set<ExecutionState*> states;
   StatsTracker *statsTracker;
-  TreeStreamWriter *pathWriter, *symPathWriter;
+  // TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
   std::vector<TimerInfo*> timers;
   PTree *processTree;
@@ -157,10 +157,6 @@ private:
   /// The index into the current \ref replayKTest or \ref replayPath
   /// object.
   unsigned replayPosition;
-
-  /// When non-null a list of "seed" inputs which will be used to
-  /// drive execution.
-  const std::vector<struct KTest *> *usingSeeds;  
 
   /// Disables forking, instead a random path is chosen. Enabled as
   /// needed to control memory usage. \see fork()
@@ -420,10 +416,10 @@ public:
   ref<klee::ConstantExpr> evalConstant(const llvm::Constant *c);
 
   virtual void setPathWriter(TreeStreamWriter *tsw) {
-    pathWriter = tsw;
+    assert(0);
   }
   virtual void setSymbolicPathWriter(TreeStreamWriter *tsw) {
-    symPathWriter = tsw;
+    assert(0);
   }
 
   virtual void setReplayKTest(const struct KTest *out) {
@@ -442,7 +438,7 @@ public:
   setModule(llvm::Module *module, const ModuleOptions &opts);
 
   virtual void useSeeds(const std::vector<struct KTest *> *seeds) { 
-    usingSeeds = seeds;
+    assert(0);
   }
 
   virtual void runFunctionAsMain(llvm::Function *f,

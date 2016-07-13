@@ -622,21 +622,6 @@ void externalsAndGlobalsCheck(const Module *m) {
   std::set<std::string> unsafe(unsafeExternals,
                                unsafeExternals+NELEMS(unsafeExternals));
 
-  switch (Libc) {
-  case KleeLibc:
-    dontCare.insert(dontCareKlee, dontCareKlee+NELEMS(dontCareKlee));
-    break;
-  case UcLibc:
-    dontCare.insert(dontCareUclibc,
-                    dontCareUclibc+NELEMS(dontCareUclibc));
-    break;
-  case NoLibc: /* silence compiler warning */
-    break;
-  }
-
-  if (WithPOSIXRuntime)
-    dontCare.insert("syscall");
-
   for (Module::const_iterator fnIt = m->begin(), fn_ie = m->end();
        fnIt != fn_ie; ++fnIt) {
     if (fnIt->isDeclaration() && !fnIt->use_empty())
@@ -798,7 +783,7 @@ int main(int argc, char **argv, char **envp) {
 
   const Module *finalModule =
     interpreter->setModule(mainModule, Opts);
-  externalsAndGlobalsCheck(finalModule);
+  // externalsAndGlobalsCheck(finalModule);
 
   interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
 

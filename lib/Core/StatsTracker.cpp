@@ -96,12 +96,6 @@ namespace {
   UncoveredUpdateInterval("uncovered-update-interval",
                           cl::init(30.),
 			  cl::desc("(default=30.0s)"));
-  
-  cl::opt<bool>
-  UseCallPaths("use-call-paths",
-	       cl::init(true),
-               cl::desc("Enable calltree tracking for instruction level statistics (default=on)"));
-  
 }
 
 ///
@@ -176,8 +170,7 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     startWallTime(util::getWallTime()),
     numBranches(0),
     fullBranches(0),
-    partialBranches(0),
-    updateMinDistToUncovered(_updateMinDistToUncovered) {
+    partialBranches(0) {
 
   KModule *km = executor.kmodule;
 
@@ -219,12 +212,6 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     }
   }
 
-  // Add timer to calculate uncovered instructions if needed by the solver
-  if (updateMinDistToUncovered) {
-    computeReachableUncovered();
-    executor.addTimer(new UpdateReachableTimer(this), UncoveredUpdateInterval);
-  }
-
   if (OutputIStats) {
     istatsFile = executor.interpreterHandler->openOutputFile("run.istats");
     assert(istatsFile && "unable to open istats file");
@@ -246,38 +233,16 @@ void StatsTracker::done() {
     writeStatsLine();
 
   if (OutputIStats) {
-    if (updateMinDistToUncovered)
-      computeReachableUncovered();
     writeIStats();
   }
 }
 
 void StatsTracker::stepInstruction(ExecutionState &es) {
   if (OutputIStats) {
-    if (TrackInstructionTime) {
-      static sys::TimeValue lastNowTime(0,0),lastUserTime(0,0);
-    
-      if (lastUserTime.seconds()==0 && lastUserTime.nanoseconds()==0) {
-        sys::TimeValue sys(0,0);
-        sys::Process::GetTimeUsage(lastNowTime,lastUserTime,sys);
-      } else {
-        sys::TimeValue now(0,0),user(0,0),sys(0,0);
-        sys::Process::GetTimeUsage(now,user,sys);
-        sys::TimeValue delta = user - lastUserTime;
-        sys::TimeValue deltaNow = now - lastNowTime;
-        stats::instructionTime += delta.usec();
-        stats::instructionRealTime += deltaNow.usec();
-        lastUserTime = user;
-        lastNowTime = now;
-      }
-    }
-
     Instruction *inst = es.pc->inst;
     const InstructionInfo &ii = *es.pc->info;
     StackFrame &sf = es.stack.back();
     theStatisticManager->setIndex(ii.id);
-    if (UseCallPaths)
-      theStatisticManager->setContext(&sf.callPathNode->statistics);
 
     if (es.instsSinceCovNew)
       ++es.instsSinceCovNew;
@@ -297,46 +262,7 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
       }
     }
   }
-
-  if (istatsFile && IStatsWriteAfterInstructions &&
-      stats::instructions % IStatsWriteAfterInstructions.getValue() == 0)
-    writeIStats();
 }
-
-///
-
-/* Should be called _after_ the es->pushFrame() */
-void StatsTracker::framePushed(ExecutionState &es, StackFrame *parentFrame) {
-  if (OutputIStats) {
-    StackFrame &sf = es.stack.back();
-
-    if (UseCallPaths) {
-      CallPathNode *parent = parentFrame ? parentFrame->callPathNode : 0;
-      CallPathNode *cp = callPathManager.getCallPath(parent, 
-                                                     sf.caller ? sf.caller->inst : 0, 
-                                                     sf.kf->function);
-      sf.callPathNode = cp;
-      cp->count++;
-    }
-  }
-
-  if (updateMinDistToUncovered) {
-    StackFrame &sf = es.stack.back();
-
-    uint64_t minDistAtRA = 0;
-    if (parentFrame)
-      minDistAtRA = parentFrame->minDistToUncoveredOnReturn;
-
-    sf.minDistToUncoveredOnReturn =
-        sf.caller ? computeMinDistToUncovered(sf.caller, minDistAtRA) : 0;
-  }
-}
-
-/* Should be called _after_ the es->popFrame() */
-void StatsTracker::framePopped(ExecutionState &es) {
-  // XXX remove me?
-}
-
 
 void StatsTracker::markBranchVisited(ExecutionState *visitedTrue, 
                                      ExecutionState *visitedFalse) {
@@ -424,8 +350,6 @@ void StatsTracker::updateStateStatistics(uint64_t addend) {
     ExecutionState &state = **it;
     const InstructionInfo &ii = *state.pc->info;
     theStatisticManager->incrementIndexedValue(stats::states, ii.id, addend);
-    if (UseCallPaths)
-      state.stack.back().callPathNode->statistics.incrementValue(stats::states, addend);
   }
 }
 
@@ -488,8 +412,6 @@ void StatsTracker::writeIStats() {
   std::string sourceFile = "";
 
   CallSiteSummaryTable callSiteStats;
-  if (UseCallPaths)
-    callPathManager.getSummaryStatistics(callSiteStats);
 
   of << "ob=" << objectFilename << "\n";
 
@@ -523,48 +445,6 @@ void StatsTracker::writeIStats() {
             if (istatsMask&(1<<i))
               of << sm.getIndexedValue(sm.getStatistic(i), index) << " ";
           of << "\n";
-
-          if (UseCallPaths && 
-              (isa<CallInst>(instr) || isa<InvokeInst>(instr))) {
-            CallSiteSummaryTable::iterator it = callSiteStats.find(instr);
-            if (it!=callSiteStats.end()) {
-              for (std::map<llvm::Function*, CallSiteInfo>::iterator
-                     fit = it->second.begin(), fie = it->second.end(); 
-                   fit != fie; ++fit) {
-                Function *f = fit->first;
-                CallSiteInfo &csi = fit->second;
-                const InstructionInfo &fii = 
-                  executor.kmodule->infos->getFunctionInfo(f);
-  
-                if (fii.file!="" && fii.file!=sourceFile)
-                  of << "cfl=" << fii.file << "\n";
-                of << "cfn=" << f->getName().str() << "\n";
-                of << "calls=" << csi.count << " ";
-                of << fii.assemblyLine << " ";
-                of << fii.line << "\n";
-
-                of << ii.assemblyLine << " ";
-                of << ii.line << " ";
-                for (unsigned i=0; i<nStats; i++) {
-                  if (istatsMask&(1<<i)) {
-                    Statistic &s = sm.getStatistic(i);
-                    uint64_t value;
-
-                    // Hack, ignore things that don't make sense on
-                    // call paths.
-                    if (&s == &stats::uncoveredInstructions) {
-                      value = 0;
-                    } else {
-                      value = csi.statistics.getValue(s);
-                    }
-
-                    of << value << " ";
-                  }
-                }
-                of << "\n";
-              }
-            }
-          }
         }
       }
     }

@@ -44,8 +44,6 @@ namespace klee {
 
     CallPathManager callPathManager;    
 
-    bool updateMinDistToUncovered;
-
   public:
     static bool useStatistics();
 
@@ -59,12 +57,6 @@ namespace klee {
     StatsTracker(Executor &_executor, std::string _objectFilename,
                  bool _updateMinDistToUncovered);
     ~StatsTracker();
-
-    // called after a new StackFrame has been pushed (for callpath tracing)
-    void framePushed(ExecutionState &es, StackFrame *parentFrame);
-
-    // called after a StackFrame has been popped 
-    void framePopped(ExecutionState &es);
 
     // called when some side of a branch has been visited. it is
     // imperative that this be called when the statistics index is at

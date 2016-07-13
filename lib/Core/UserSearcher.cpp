@@ -33,15 +33,6 @@ namespace {
 			clEnumValN(Searcher::NURS_QC, "nurs:qc", "use NURS with Query-Cost"),
 			clEnumValEnd));
 
-  cl::opt<bool>
-  UseIterativeDeepeningTimeSearch("use-iterative-deepening-time-search", 
-                                    cl::desc("(experimental)"));
-
-  cl::opt<bool>
-  UseBatchingSearch("use-batching-search", 
-		    cl::desc("Use batching searcher (keep running selected state for N instructions/time, see --batch-instructions and --batch-time)"),
-		    cl::init(false));
-
   cl::opt<unsigned>
   BatchInstructions("batch-instructions",
                     cl::desc("Number of instructions to batch when using --use-batching-search"),
@@ -51,15 +42,6 @@ namespace {
   BatchTime("batch-time",
             cl::desc("Amount of time to batch when using --use-batching-search"),
             cl::init(5.0));
-
-
-  cl::opt<bool>
-  UseMerge("use-merge", 
-           cl::desc("Enable support for klee_merge() (experimental)"));
- 
-  cl::opt<bool>
-  UseBumpMerge("use-bump-merge", 
-           cl::desc("Enable support for klee_merge() (extra experimental)"));
 
 }
 
@@ -92,41 +74,7 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, Executor &executor) {
 }
 
 Searcher *klee::constructUserSearcher(Executor &executor) {
-
-  // default values
-  if (CoreSearch.size() == 0) {
-    CoreSearch.push_back(Searcher::RandomPath);
-    CoreSearch.push_back(Searcher::NURS_CovNew);
-  }
-
+  CoreSearch.push_back(Searcher::RandomPath);
   Searcher *searcher = getNewSearcher(CoreSearch[0], executor);
-  
-  if (CoreSearch.size() > 1) {
-    std::vector<Searcher *> s;
-    s.push_back(searcher);
-
-    for (unsigned i=1; i<CoreSearch.size(); i++)
-      s.push_back(getNewSearcher(CoreSearch[i], executor));
-    
-    searcher = new InterleavedSearcher(s);
-  }
-
-  if (UseBatchingSearch) {
-    searcher = new BatchingSearcher(searcher, BatchTime, BatchInstructions);
-  }
-
-  // merge support is experimental
-  if (UseMerge) {
-    assert(!UseBumpMerge);
-    assert(std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::RandomPath) == CoreSearch.end()); // XXX: needs further debugging: test/Features/Searchers.c fails with this searcher
-    searcher = new MergingSearcher(executor, searcher);
-  } else if (UseBumpMerge) {
-    searcher = new BumpMergingSearcher(executor, searcher);
-  }
-  
-  if (UseIterativeDeepeningTimeSearch) {
-    searcher = new IterativeDeepeningTimeSearcher(searcher);
-  }
-
   return searcher;
 }

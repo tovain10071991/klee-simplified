@@ -271,11 +271,6 @@ namespace {
            cl::desc("Amount of time to dedicate to seeds, before normal search (default=0 (off))"),
            cl::init(0));
   
-  cl::opt<unsigned int>
-  StopAfterNInstructions("stop-after-n-instructions",
-                         cl::desc("Stop execution after specified number of instructions (default=0 (off))"),
-                         cl::init(0));
-  
   cl::opt<unsigned>
   MaxForks("max-forks",
            cl::desc("Only fork this many times (default=-1 (off))"),
@@ -305,8 +300,8 @@ namespace klee {
 Executor::Executor(const InterpreterOptions &opts, InterpreterHandler *ih)
     : Interpreter(opts), kmodule(0), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher()), statsTracker(0),
-      pathWriter(0), symPathWriter(0), specialFunctionHandler(0),
-      processTree(0), replayKTest(0), replayPath(0), usingSeeds(0),
+      specialFunctionHandler(0),
+      processTree(0), replayKTest(0), replayPath(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false),
       coreSolverTimeout(0),
@@ -340,12 +335,10 @@ const Module *Executor::setModule(llvm::Module *module,
   kmodule->prepare(opts, interpreterHandler);
   specialFunctionHandler->bind();
 
-  if (StatsTracker::useStatistics()) {
-    statsTracker = 
+  statsTracker = 
       new StatsTracker(*this,
                        interpreterHandler->getOutputFilename("assembly.ll"),
                        userSearcherRequiresMD2U());
-  }
   
   return module;
 }
@@ -443,12 +436,6 @@ extern void *__dso_handle __attribute__ ((__weak__));
 void Executor::initializeGlobals(ExecutionState &state) {
   Module *m = kmodule->module;
 
-  if (m->getModuleInlineAsm() != "")
-    klee_warning("executable has module level assembly (ignoring)");
-#if LLVM_VERSION_CODE < LLVM_VERSION(3, 3)
-  assert(m->lib_begin() == m->lib_end() &&
-         "XXX do not support dependent libraries");
-#endif
   // represent function globals using the address of the actual llvm function
   // object. given that we use malloc to allocate memory in states this also
   // ensures that we won't conflict. we don't need to allocate a memory object
@@ -460,46 +447,11 @@ void Executor::initializeGlobals(ExecutionState &state) {
     // If the symbol has external weak linkage then it is implicitly
     // not defined in this module; if it isn't resolvable then it
     // should be null.
-    if (f->hasExternalWeakLinkage() && 
-        !externalDispatcher->resolveSymbol(f->getName())) {
-      addr = Expr::createPointer(0);
-    } else {
-      addr = Expr::createPointer((unsigned long) (void*) f);
-      legalFunctions.insert((uint64_t) (unsigned long) (void*) f);
-    }
+    addr = Expr::createPointer((unsigned long) (void*) f);
+    legalFunctions.insert((uint64_t) (unsigned long) (void*) f);
     
     globalAddresses.insert(std::make_pair(f, addr));
   }
-
-  // Disabled, we don't want to promote use of live externals.
-#ifdef HAVE_CTYPE_EXTERNALS
-#ifndef WINDOWS
-#ifndef DARWIN
-  /* From /usr/include/errno.h: it [errno] is a per-thread variable. */
-  int *errno_addr = __errno_location();
-  addExternalObject(state, (void *)errno_addr, sizeof *errno_addr, false);
-
-  /* from /usr/include/ctype.h:
-       These point into arrays of 384, so they can be indexed by any `unsigned
-       char' value [0,255]; by EOF (-1); or by any `signed char' value
-       [-128,-1).  ISO C requires that the ctype functions work for `unsigned */
-  const uint16_t **addr = __ctype_b_loc();
-  addExternalObject(state, const_cast<uint16_t*>(*addr-128),
-                    384 * sizeof **addr, true);
-  addExternalObject(state, addr, sizeof(*addr), true);
-    
-  const int32_t **lower_addr = __ctype_tolower_loc();
-  addExternalObject(state, const_cast<int32_t*>(*lower_addr-128),
-                    384 * sizeof **lower_addr, true);
-  addExternalObject(state, lower_addr, sizeof(*lower_addr), true);
-  
-  const int32_t **upper_addr = __ctype_toupper_loc();
-  addExternalObject(state, const_cast<int32_t*>(*upper_addr-128),
-                    384 * sizeof **upper_addr, true);
-  addExternalObject(state, upper_addr, sizeof(*upper_addr), true);
-#endif
-#endif
-#endif
 
   // allocate and initialize globals, done in two passes since we may
   // need address of a global in order to initialize some other one.
@@ -508,80 +460,15 @@ void Executor::initializeGlobals(ExecutionState &state) {
   for (Module::const_global_iterator i = m->global_begin(),
          e = m->global_end();
        i != e; ++i) {
-    if (i->isDeclaration()) {
-      // FIXME: We have no general way of handling unknown external
-      // symbols. If we really cared about making external stuff work
-      // better we could support user definition, or use the EXE style
-      // hack where we check the object file information.
+    LLVM_TYPE_Q Type *ty = i->getType()->getElementType();
+    uint64_t size = kmodule->targetData->getTypeStoreSize(ty);
+    MemoryObject *mo = memory->allocate(size, false, true, &*i);
+    if (!mo)
+      llvm::report_fatal_error("out of memory");
+    ObjectState *os = bindObjectInState(state, mo, false);
+    globalObjects.insert(std::make_pair(i, mo));
+    globalAddresses.insert(std::make_pair(i, mo->getBaseExpr()));
 
-      LLVM_TYPE_Q Type *ty = i->getType()->getElementType();
-      uint64_t size = kmodule->targetData->getTypeStoreSize(ty);
-
-      // XXX - DWD - hardcode some things until we decide how to fix.
-#ifndef WINDOWS
-      if (i->getName() == "_ZTVN10__cxxabiv117__class_type_infoE") {
-        size = 0x2C;
-      } else if (i->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE") {
-        size = 0x2C;
-      } else if (i->getName() == "_ZTVN10__cxxabiv121__vmi_class_type_infoE") {
-        size = 0x2C;
-      }
-#endif
-
-      if (size == 0) {
-        llvm::errs() << "Unable to find size for global variable: " 
-                     << i->getName() 
-                     << " (use will result in out of bounds access)\n";
-      }
-
-      MemoryObject *mo = memory->allocate(size, false, true, i);
-      ObjectState *os = bindObjectInState(state, mo, false);
-      globalObjects.insert(std::make_pair(i, mo));
-      globalAddresses.insert(std::make_pair(i, mo->getBaseExpr()));
-
-      // Program already running = object already initialized.  Read
-      // concrete value and write it to our copy.
-      if (size) {
-        void *addr;
-        if (i->getName() == "__dso_handle") {
-          addr = &__dso_handle; // wtf ?
-        } else {
-          addr = externalDispatcher->resolveSymbol(i->getName());
-        }
-        if (!addr)
-          klee_error("unable to load symbol(%s) while initializing globals.", 
-                     i->getName().data());
-
-        for (unsigned offset=0; offset<mo->size; offset++)
-          os->write8(offset, ((unsigned char*)addr)[offset]);
-      }
-    } else {
-      LLVM_TYPE_Q Type *ty = i->getType()->getElementType();
-      uint64_t size = kmodule->targetData->getTypeStoreSize(ty);
-      MemoryObject *mo = memory->allocate(size, false, true, &*i);
-      if (!mo)
-        llvm::report_fatal_error("out of memory");
-      ObjectState *os = bindObjectInState(state, mo, false);
-      globalObjects.insert(std::make_pair(i, mo));
-      globalAddresses.insert(std::make_pair(i, mo->getBaseExpr()));
-
-      if (!i->hasInitializer())
-          os->initializeToRandom();
-    }
-  }
-  
-  // link aliases to their definitions (if bound)
-  for (Module::alias_iterator i = m->alias_begin(), ie = m->alias_end(); 
-       i != ie; ++i) {
-    // Map the alias to its aliasee's address. This works because we have
-    // addresses for everything, even undefined functions. 
-    globalAddresses.insert(std::make_pair(i, evalConstant(i->getAliasee())));
-  }
-
-  // once all objects are allocated, do the actual initialization
-  for (Module::const_global_iterator i = m->global_begin(),
-         e = m->global_end();
-       i != e; ++i) {
     if (i->hasInitializer()) {
       MemoryObject *mo = globalObjects.find(i)->second;
       const ObjectState *os = state.addressSpace.findObject(mo);
@@ -589,8 +476,9 @@ void Executor::initializeGlobals(ExecutionState &state) {
       ObjectState *wos = state.addressSpace.getWriteable(mo, os);
       
       initializeGlobalObject(state, wos, i->getInitializer(), 0);
-      // if(i->isConstant()) os->setReadOnly(true);
     }
+    else
+      os->initializeToRandom();
   }
 }
 
@@ -814,20 +702,8 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
   // hint to just use the single constraint instead of all the binary
   // search ones. If that makes sense.
   if (res==Solver::True) {
-    if (!isInternal) {
-      if (pathWriter) {
-        current.pathOS << "1";
-      }
-    }
-
     return StatePair(&current, 0);
   } else if (res==Solver::False) {
-    if (!isInternal) {
-      if (pathWriter) {
-        current.pathOS << "0";
-      }
-    }
-
     return StatePair(0, &current);
   } else {
     TimerStatIncrementer timer(stats::forkTime);
@@ -880,19 +756,6 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
       processTree->split(current.ptreeNode, falseState, trueState);
     falseState->ptreeNode = res.first;
     trueState->ptreeNode = res.second;
-
-    if (!isInternal) {
-      if (pathWriter) {
-        falseState->pathOS = pathWriter->open(current.pathOS);
-        trueState->pathOS << "1";
-        falseState->pathOS << "0";
-      }      
-      if (symPathWriter) {
-        falseState->symPathOS = symPathWriter->open(current.symPathOS);
-        trueState->symPathOS << "1";
-        falseState->symPathOS << "0";
-      }
-    }
 
     addConstraint(*trueState, condition);
     addConstraint(*falseState, Expr::createIsZero(condition));
@@ -1132,9 +995,6 @@ void Executor::stepInstruction(ExecutionState &state) {
   ++stats::instructions;
   state.prevPC = state.pc;
   ++state.pc;
-
-  if (stats::instructions==StopAfterNInstructions)
-    haltExecution = true;
 }
 
 void Executor::executeCall(ExecutionState &state, 
@@ -1213,9 +1073,6 @@ void Executor::executeCall(ExecutionState &state,
     KFunction *kf = kmodule->functionMap[f];
     state.pushFrame(state.prevPC, kf);
     state.pc = kf->instructions;
-
-    if (statsTracker)
-      statsTracker->framePushed(state, &state.stack[state.stack.size()-2]);
 
      // TODO: support "byval" parameter attribute
      // TODO: support zeroext, signext, sret attributes
@@ -1416,9 +1273,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       terminateStateOnExit(state);
     } else {
       state.popFrame();
-
-      if (statsTracker)
-        statsTracker->framePopped(state);
 
       if (InvokeInst *ii = dyn_cast<InvokeInst>(caller)) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
@@ -2492,28 +2346,7 @@ void Executor::computeOffsets(KGEPInstruction *kgepi, TypeIt ib, TypeIt ie) {
   kgepi->offset = constantOffset->getZExtValue();
 }
 
-void Executor::bindInstructionConstants(KInstruction *KI) {
-  KGEPInstruction *kgepi = static_cast<KGEPInstruction*>(KI);
-
-  if (GetElementPtrInst *gepi = dyn_cast<GetElementPtrInst>(KI->inst)) {
-    computeOffsets(kgepi, gep_type_begin(gepi), gep_type_end(gepi));
-  } else if (InsertValueInst *ivi = dyn_cast<InsertValueInst>(KI->inst)) {
-    computeOffsets(kgepi, iv_type_begin(ivi), iv_type_end(ivi));
-    assert(kgepi->indices.empty() && "InsertValue constant offset expected");
-  } else if (ExtractValueInst *evi = dyn_cast<ExtractValueInst>(KI->inst)) {
-    computeOffsets(kgepi, ev_type_begin(evi), ev_type_end(evi));
-    assert(kgepi->indices.empty() && "ExtractValue constant offset expected");
-  }
-}
-
 void Executor::bindModuleConstants() {
-  for (std::vector<KFunction*>::iterator it = kmodule->functions.begin(), 
-         ie = kmodule->functions.end(); it != ie; ++it) {
-    KFunction *kf = *it;
-    for (unsigned i=0; i<kf->numInstructions; ++i)
-      bindInstructionConstants(kf->instructions[i]);
-  }
-
   kmodule->constantTable = new Cell[kmodule->constants.size()];
   for (unsigned i=0; i<kmodule->constants.size(); ++i) {
     Cell &c = kmodule->constantTable[i];
@@ -2579,79 +2412,7 @@ void Executor::run(ExecutionState &initialState) {
 
   states.insert(&initialState);
 
-  if (usingSeeds) {
-    std::vector<SeedInfo> &v = seedMap[&initialState];
-    
-    for (std::vector<KTest*>::const_iterator it = usingSeeds->begin(), 
-           ie = usingSeeds->end(); it != ie; ++it)
-      v.push_back(SeedInfo(*it));
-
-    int lastNumSeeds = usingSeeds->size()+10;
-    double lastTime, startTime = lastTime = util::getWallTime();
-    ExecutionState *lastState = 0;
-    while (!seedMap.empty()) {
-      if (haltExecution) {
-        doDumpStates();
-        return;
-      }
-
-      std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it = 
-        seedMap.upper_bound(lastState);
-      if (it == seedMap.end())
-        it = seedMap.begin();
-      lastState = it->first;
-      unsigned numSeeds = it->second.size();
-      ExecutionState &state = *lastState;
-      KInstruction *ki = state.pc;
-      stepInstruction(state);
-
-      executeInstruction(state, ki);
-      processTimers(&state, MaxInstructionTime * numSeeds);
-      updateStates(&state);
-
-      if ((stats::instructions % 1000) == 0) {
-        int numSeeds = 0, numStates = 0;
-        for (std::map<ExecutionState*, std::vector<SeedInfo> >::iterator
-               it = seedMap.begin(), ie = seedMap.end();
-             it != ie; ++it) {
-          numSeeds += it->second.size();
-          numStates++;
-        }
-        double time = util::getWallTime();
-        if (SeedTime>0. && time > startTime + SeedTime) {
-          klee_warning("seed time expired, %d seeds remain over %d states",
-                       numSeeds, numStates);
-          break;
-        } else if (numSeeds<=lastNumSeeds-10 ||
-                   time >= lastTime+10) {
-          lastTime = time;
-          lastNumSeeds = numSeeds;          
-          klee_message("%d seeds remaining over: %d states", 
-                       numSeeds, numStates);
-        }
-      }
-    }
-
-    klee_message("seeding done (%d states remain)", (int) states.size());
-
-    // XXX total hack, just because I like non uniform better but want
-    // seed results to be equally weighted.
-    for (std::set<ExecutionState*>::iterator
-           it = states.begin(), ie = states.end();
-         it != ie; ++it) {
-      (*it)->weight = 1.;
-    }
-
-    if (OnlySeed) {
-      doDumpStates();
-      return;
-    }
-  }
-
   searcher = constructUserSearcher(*this);
-
-  std::vector<ExecutionState *> newStates(states.begin(), states.end());
-  searcher->update(0, newStates, std::vector<ExecutionState *>());
 
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
@@ -3289,86 +3050,11 @@ void Executor::runFunctionAsMain(Function *f,
 				 int argc,
 				 char **argv,
 				 char **envp) {
-  std::vector<ref<Expr> > arguments;
-
   // force deterministic initialization of memory objects
   srand(1);
   srandom(1);
-  
-  MemoryObject *argvMO = 0;
-
-  // In order to make uclibc happy and be closer to what the system is
-  // doing we lay out the environments at the end of the argv array
-  // (both are terminated by a null). There is also a final terminating
-  // null that uclibc seems to expect, possibly the ELF header?
-
-  int envc;
-  for (envc=0; envp[envc]; ++envc) ;
-
-  unsigned NumPtrBytes = Context::get().getPointerWidth() / 8;
-  KFunction *kf = kmodule->functionMap[f];
-  assert(kf);
-  Function::arg_iterator ai = f->arg_begin(), ae = f->arg_end();
-  if (ai!=ae) {
-    arguments.push_back(ConstantExpr::alloc(argc, Expr::Int32));
-
-    if (++ai!=ae) {
-      argvMO = memory->allocate((argc+1+envc+1+1) * NumPtrBytes, false, true,
-                                f->begin()->begin());
-
-      if (!argvMO)
-        klee_error("Could not allocate memory for function arguments");
-
-      arguments.push_back(argvMO->getBaseExpr());
-
-      if (++ai!=ae) {
-        uint64_t envp_start = argvMO->address + (argc+1)*NumPtrBytes;
-        arguments.push_back(Expr::createPointer(envp_start));
-
-        if (++ai!=ae)
-          klee_error("invalid main function (expect 0-3 arguments)");
-      }
-    }
-  }
 
   ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
-  
-  if (pathWriter) 
-    state->pathOS = pathWriter->open();
-  if (symPathWriter) 
-    state->symPathOS = symPathWriter->open();
-
-
-  if (statsTracker)
-    statsTracker->framePushed(*state, 0);
-
-  assert(arguments.size() == f->arg_size() && "wrong number of arguments");
-  for (unsigned i = 0, e = f->arg_size(); i != e; ++i)
-    bindArgument(kf, i, *state, arguments[i]);
-
-  if (argvMO) {
-    ObjectState *argvOS = bindObjectInState(*state, argvMO, false);
-
-    for (int i=0; i<argc+1+envc+1+1; i++) {
-      if (i==argc || i>=argc+1+envc) {
-        // Write NULL pointer
-        argvOS->write(i * NumPtrBytes, Expr::createPointer(0));
-      } else {
-        char *s = i<argc ? argv[i] : envp[i-(argc+1)];
-        int j, len = strlen(s);
-        
-        MemoryObject *arg = memory->allocate(len+1, false, true, state->pc->inst);
-        if (!arg)
-          klee_error("Could not allocate memory for function arguments");
-        ObjectState *os = bindObjectInState(*state, arg, false);
-        for (j=0; j<len+1; j++)
-          os->write8(j, s[j]);
-
-        // Write pointer to newly allocated and initialised argv/envp c-string
-        argvOS->write(i * NumPtrBytes, arg->getBaseExpr());
-      }
-    }
-  }
   
   initializeGlobals(*state);
 
@@ -3390,13 +3076,11 @@ void Executor::runFunctionAsMain(Function *f,
 }
 
 unsigned Executor::getPathStreamID(const ExecutionState &state) {
-  assert(pathWriter);
-  return state.pathOS.getID();
+  assert(0);
 }
 
 unsigned Executor::getSymbolicPathStreamID(const ExecutionState &state) {
-  assert(symPathWriter);
-  return state.symPathOS.getID();
+  assert(0);
 }
 
 void Executor::getConstraintLog(const ExecutionState &state, std::string &res,
