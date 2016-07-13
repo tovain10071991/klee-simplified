@@ -194,9 +194,6 @@ private:
   
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
-  void printFileLine(ExecutionState &state, KInstruction *ki,
-                     llvm::raw_ostream &file);
-
   void run(ExecutionState &initialState);
 
   // Given a concrete object in our [klee's] address space, add it to 

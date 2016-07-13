@@ -1184,11 +1184,6 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   }
 }
 
-void Executor::printFileLine(ExecutionState &state, KInstruction *ki,
-                             llvm::raw_ostream &debugFile) {
-    debugFile << "     [no debug info]:";
-}
-
 /// Compute the true target of a function call, resolving LLVM and KLEE aliases
 /// and bitcasts.
 Function* Executor::getTargetFunction(Value *calledVal, ExecutionState &state) {
@@ -1316,29 +1311,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     }      
     break;
   }
-#if LLVM_VERSION_CODE < LLVM_VERSION(3, 1)
-  case Instruction::Unwind: {
-    for (;;) {
-      KInstruction *kcaller = state.stack.back().caller;
-      state.popFrame();
-
-      if (statsTracker)
-        statsTracker->framePopped(state);
-
-      if (state.stack.empty()) {
-        terminateStateOnExecError(state, "unwind from initial stack frame");
-        break;
-      } else {
-        Instruction *caller = kcaller->inst;
-        if (InvokeInst *ii = dyn_cast<InvokeInst>(caller)) {
-          transferToBasicBlock(ii->getUnwindDest(), caller->getParent(), state);
-          break;
-        }
-      }
-    }
-    break;
-  }
-#endif
   case Instruction::Br: {
     BranchInst *bi = cast<BranchInst>(i);
     if (bi->isUnconditional()) {
@@ -1491,7 +1463,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     terminateStateOnExecError(state, "reached \"unreachable\" instruction");
     break;
 
-  case Instruction::Invoke:
   case Instruction::Call: {
     CallSite cs(i);
 
@@ -1499,14 +1470,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     Value *fp = cs.getCalledValue();
     Function *f = getTargetFunction(fp, state);
 
-    // Skip debug intrinsics, we can't evaluate their metadata arguments.
-    if (f && isDebugIntrinsic(f, kmodule))
-      break;
-
-    if (isa<InlineAsm>(fp)) {
-      terminateStateOnExecError(state, "inline assembly is unsupported");
-      break;
-    }
     // evaluate arguments
     std::vector< ref<Expr> > arguments;
     arguments.reserve(numArgs);
