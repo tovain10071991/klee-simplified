@@ -20,7 +20,6 @@ namespace llvm {
 
 namespace klee {
   class Executor;
-  struct InstructionInfo;
   class KModule;
 
 
@@ -28,7 +27,6 @@ namespace klee {
   /// during execution.
   struct KInstruction {
     llvm::Instruction *inst;    
-    const InstructionInfo *info;
 
     /// Value numbers for each operand. -1 is an invalid value,
     /// otherwise negative numbers are indices (negated and offset by

@@ -401,7 +401,6 @@ private:
   void initTimers();
   void processTimers(ExecutionState *current,
                      double maxInstTime);
-  void checkMemoryUsage();
   void doDumpStates();
 
 public:

@@ -46,13 +46,9 @@ namespace klee {
     unsigned numArgs, numRegisters;
 
     unsigned numInstructions;
-    vector<KInstruction *>instructions;
+    std::vector<KInstruction *>instructions;
 
     std::map<llvm::BasicBlock*, unsigned> basicBlockEntry;
-
-    /// Whether instructions in this function should count as
-    /// "coverable" for statistics and search heuristics.
-    bool trackCoverage;
 
   private:
     KFunction(const KFunction&);
@@ -91,32 +87,15 @@ namespace klee {
     llvm::DataLayout *targetData;
 #endif
     
-    // Some useful functions to know the address of
-    llvm::Function *kleeMergeFn;
-
     // Our shadow versions of LLVM structures.
-    std::vector<KFunction*> functions;
     std::map<llvm::Function*, KFunction*> functionMap;
-
-    // Functions which escape (may be called indirectly)
-    // XXX change to KFunction
-    std::set<llvm::Function*> escapingFunctions;
-
-    InstructionInfoTable *infos;
 
     std::vector<llvm::Constant*> constants;
     std::map<llvm::Constant*, KConstant*> constantMap;
     KConstant* getKConstant(llvm::Constant *c);
 
     Cell *constantTable;
-
-    // Functions which are part of KLEE runtime
-    std::set<const llvm::Function*> internalFunctions;
-
-  private:
-    // Mark function with functionName as part of the KLEE runtime
-    void addInternalFunction(const char* functionName);
-
+    
   public:
     KModule(llvm::Module *_module);
     ~KModule();
