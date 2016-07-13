@@ -729,14 +729,8 @@ int main(int argc, char **argv, char **envp) {
                ec.message().c_str());
   }
 
-  mainModule = getLazyBitcodeModule(BufferPtr.get(), getGlobalContext(), &ErrorMsg);
+  mainModule = ParseBitcodeFile(BufferPtr.get(), getGlobalContext());
 
-  if (mainModule) {
-    if (mainModule->MaterializeAllPermanently(&ErrorMsg)) {
-      delete mainModule;
-      mainModule = 0;
-    }
-  }
   if (!mainModule)
     klee_error("error loading program '%s': %s", InputFile.c_str(),
                ErrorMsg.c_str());
@@ -755,25 +749,6 @@ int main(int argc, char **argv, char **envp) {
     return -1;
   }
 
-  // FIXME: Change me to std types.
-  int pArgc;
-  char **pArgv;
-  char **pEnvp;
-  pEnvp = envp;
-
-  pArgc = InputArgv.size() + 1;
-  pArgv = new char *[pArgc];
-  for (unsigned i=0; i<InputArgv.size()+1; i++) {
-    std::string &arg = (i==0 ? InputFile : InputArgv[i-1]);
-    unsigned size = arg.size() + 1;
-    char *pArg = new char[size];
-
-    std::copy(arg.begin(), arg.end(), pArg);
-    pArg[size - 1] = 0;
-
-    pArgv[i] = pArg;
-  }
-
   Interpreter::InterpreterOptions IOpts;
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
   KleeHandler *handler = new KleeHandler();
@@ -781,11 +756,11 @@ int main(int argc, char **argv, char **envp) {
     theInterpreter = Interpreter::create(IOpts, handler);
   handler->setInterpreter(interpreter);
 
-  const Module *finalModule =
+  Module *finalModule =
     interpreter->setModule(mainModule, Opts);
   // externalsAndGlobalsCheck(finalModule);
 
-  interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+  interpreter->runFunctionAsMain(mainFn, 0, 0, 0);
 
   delete interpreter;
   delete handler;

@@ -434,7 +434,7 @@ public:
     replayPosition = 0;
   }
 
-  virtual const llvm::Module *
+  virtual llvm::Module *
   setModule(llvm::Module *module, const ModuleOptions &opts);
 
   virtual void useSeeds(const std::vector<struct KTest *> *seeds) { 

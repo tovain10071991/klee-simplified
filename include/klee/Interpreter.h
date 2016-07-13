@@ -99,7 +99,7 @@ public:
   ///
   /// \return The final module after it has been optimized, checks
   /// inserted, and modified for interpretation.
-  virtual const llvm::Module * 
+  virtual llvm::Module * 
   setModule(llvm::Module *module, 
             const ModuleOptions &opts) = 0;
 

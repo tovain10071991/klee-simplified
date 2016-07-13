@@ -318,7 +318,7 @@ Executor::Executor(const InterpreterOptions &opts, InterpreterHandler *ih)
 }
 
 
-const Module *Executor::setModule(llvm::Module *module, 
+Module *Executor::setModule(llvm::Module *module, 
                                   const ModuleOptions &opts) {
   assert(!kmodule && module && "can only register one module"); // XXX gross
   
