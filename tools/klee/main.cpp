@@ -738,7 +738,7 @@ int main(int argc, char **argv, char **envp) {
     interpreter->setModule(mainModule, Opts);
   // externalsAndGlobalsCheck(finalModule);
 
-  Function *mainFn = mainModule->getFunction(EntryPoint);
+  Function *mainFn = get_first_func(EntryPoint);
   if (!mainFn) {
     llvm::errs() << "'" << EntryPoint << "' function not found in module.\n";
     return -1;
