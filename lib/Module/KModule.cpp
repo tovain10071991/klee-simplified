@@ -67,9 +67,6 @@ namespace {
     eSwitchTypeLLVM,
     eSwitchTypeInternal
   };
-
-  cl::list<std::string>
-  MergeAtExit("merge-at-exit");
     
   cl::opt<bool>
   NoTruncateSourceLines("no-truncate-source-lines",
