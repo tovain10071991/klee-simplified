@@ -70,6 +70,7 @@
 #include <iterator>
 #include <sstream>
 
+#include "Helper/DecompileHelper.h"
 
 using namespace llvm;
 using namespace klee;
@@ -719,35 +720,11 @@ int main(int argc, char **argv, char **envp) {
 
   sys::SetInterruptFunction(interrupt_handle);
 
-  // Load the bytecode...
-  std::string ErrorMsg;
-  Module *mainModule = 0;
-  OwningPtr<MemoryBuffer> BufferPtr;
-  error_code ec=MemoryBuffer::getFileOrSTDIN(InputFile.c_str(), BufferPtr);
-  if (ec) {
-    klee_error("error loading program '%s': %s", InputFile.c_str(),
-               ec.message().c_str());
-  }
-
-  mainModule = ParseBitcodeFile(BufferPtr.get(), getGlobalContext());
-
-  if (!mainModule)
-    klee_error("error loading program '%s': %s", InputFile.c_str(),
-               ErrorMsg.c_str());
-
   std::string LibraryDir = KleeHandler::getRunTimeLibraryPath(argv[0]);
   Interpreter::ModuleOptions Opts(LibraryDir.c_str(),
                                   /*Optimize=*/OptimizeModule,
                                   /*CheckDivZero=*/CheckDivZero,
                                   /*CheckOvershift=*/CheckOvershift);
-
-  // Get the desired main function.  klee_main initializes uClibc
-  // locale and other data and then calls main.
-  Function *mainFn = mainModule->getFunction(EntryPoint);
-  if (!mainFn) {
-    llvm::errs() << "'" << EntryPoint << "' function not found in module.\n";
-    return -1;
-  }
 
   Interpreter::InterpreterOptions IOpts;
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
@@ -756,10 +733,17 @@ int main(int argc, char **argv, char **envp) {
     theInterpreter = Interpreter::create(IOpts, handler);
   handler->setInterpreter(interpreter);
 
-  Module *finalModule =
+  Module *mainModule = get_module(InputFile.c_str());
+  mainModule =
     interpreter->setModule(mainModule, Opts);
   // externalsAndGlobalsCheck(finalModule);
 
+  Function *mainFn = mainModule->getFunction(EntryPoint);
+  if (!mainFn) {
+    llvm::errs() << "'" << EntryPoint << "' function not found in module.\n";
+    return -1;
+  }
+  
   interpreter->runFunctionAsMain(mainFn, 0, 0, 0);
 
   delete interpreter;

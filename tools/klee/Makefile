@@ -12,7 +12,7 @@ TOOLNAME = klee
 
 include $(LEVEL)/Makefile.config
 
-USEDLIBS = kleeCore.a kleeBasic.a kleeModule.a  kleaverSolver.a kleaverExpr.a kleeSupport.a 
+USEDLIBS = kleeCore.a kleeBasic.a kleeModule.a  kleaverSolver.a kleaverExpr.a kleeSupport.a SaibHelper.a FractureCodeInv.a
 LINK_COMPONENTS = jit bitreader bitwriter ipo linker engine
 
 ifeq ($(shell python -c "print($(LLVM_VERSION_MAJOR).$(LLVM_VERSION_MINOR) >= 3.3)"), True)
@@ -37,3 +37,8 @@ endif
 ifeq ($(HAVE_ZLIB),1)
   LIBS += -lz
 endif
+
+LDFLAGS += -L/home/user/Documents/klee-mcsema-project/mcsema-install/lib/ -L/home/user/Documents/protobuf-2.5.0-install/lib/ -L/home/user/Documents/boost-install/lib/boost-1.52.0/ -L/home/user/Documents/libelf-0.8.13-install/lib/ -L/home/user/Documents/protobuf-2.5.0-install/lib/
+LLDB_WITHOUT_LLVM_LIBS = -lLLDBWithoutLLVM -lpython2.7 -lpanel -lncurses -lrt
+ProjLibsOptions += $(LLDB_WITHOUT_LLVM_LIBS)
+LIBS += -lLLVM-3.4 -lelf -lprotobuf
