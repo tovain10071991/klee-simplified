@@ -781,10 +781,6 @@ int main(int argc, char **argv, char **envp) {
     theInterpreter = Interpreter::create(IOpts, handler);
   handler->setInterpreter(interpreter);
 
-  const Module *finalModule =
-    interpreter->setModule(mainModule, Opts);
-  // externalsAndGlobalsCheck(finalModule);
-
   interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
 
   delete interpreter;
