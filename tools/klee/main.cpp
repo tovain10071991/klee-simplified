@@ -734,15 +734,16 @@ int main(int argc, char **argv, char **envp) {
   handler->setInterpreter(interpreter);
 
   Module *mainModule = get_module(InputFile.c_str());
-  mainModule =
-    interpreter->setModule(mainModule, Opts);
-  // externalsAndGlobalsCheck(finalModule);
-
+  
   Function *mainFn = get_first_func(EntryPoint);
   if (!mainFn) {
     llvm::errs() << "'" << EntryPoint << "' function not found in module.\n";
     return -1;
   }
+  
+  mainModule =
+    interpreter->setModule(mainModule, Opts);
+  // externalsAndGlobalsCheck(finalModule);
   
   interpreter->runFunctionAsMain(mainFn, 0, 0, 0);
 

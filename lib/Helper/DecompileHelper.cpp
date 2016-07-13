@@ -101,6 +101,9 @@ Decompiler* get_decompiler(unsigned long addr)
   return decompiler;
 }
 
+static map<uint64_t, MachineFunction*> mfuncs;
+static map<uint64_t, MachineBasicBlock*> mbbs;
+
 Function* get_first_func(unsigned long addr)
 {
   Decompiler* decompiler = get_decompiler(addr);
@@ -120,8 +123,7 @@ Function* get_first_func(unsigned long addr)
 
 Function* get_first_func(string func_name)
 {
-  unsigned long addr = get_addr(func_name);
-  return get_first_func(addr);
+  return dyn_cast<Function>(module->getOrInsertFunction(func_name, FunctionType::get(Type::getVoidTy(*(mcd->getContext())), false)));
 }
 
 Module* get_module_with_function(unsigned long addr)
@@ -141,3 +143,10 @@ Module* get_module_with_function(string func_name)
     return NULL;
   return get_module_with_function(addr);
 }
+/*
+void decompile_inst(uint64_t addr)
+{
+  Decompiler* decompiler = get_decompiler(addr);
+  decompiler->getDisassembler()->decodeInstruction(get_unload_addr(addr),
+  mbb);
+}*/

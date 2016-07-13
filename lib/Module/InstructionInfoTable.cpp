@@ -154,6 +154,10 @@ InstructionInfoTable::InstructionInfoTable(Module *m)
   max_id = id;
 }
 
+void InstructionInfoTable::addInfo(Instruction inst) {
+  
+}
+
 InstructionInfoTable::~InstructionInfoTable() {
   for (std::set<const std::string *, ltstr>::iterator
          it = internedStrings.begin(), ie = internedStrings.end();

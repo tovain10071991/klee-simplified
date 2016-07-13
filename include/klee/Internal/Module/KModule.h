@@ -46,7 +46,7 @@ namespace klee {
     unsigned numArgs, numRegisters;
 
     unsigned numInstructions;
-    KInstruction **instructions;
+    vector<KInstruction *>instructions;
 
     std::map<llvm::BasicBlock*, unsigned> basicBlockEntry;
 

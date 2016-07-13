@@ -6,8 +6,8 @@ define_visit(JMP64r)
 
   IRB->SetInsertPoint(BB);
 
-  // jmp target
-  IRB->CreateUnreachable();
+  Value* target_val = get_reg_val(target_opr.getReg());
+  IRB->CreateCall(BB->getParent()->getParent()->getFunction("saib_branch"), std::vector<Value*>({target_val, get_imm_val(0, 64, 64), get_imm_val(1, 1, 1)}));
 }
 
 define_visit(JMP)
@@ -20,8 +20,7 @@ define_visit(JMP)
 
   int64_t off = off_opr.getImm();
 
-  std::stringstream bb_name;
-  bb_name << "bb_" << (Dec->getDisassembler()->getDebugOffset(I->getDebugLoc())+ I->getDesc().getSize() + off);
-  BasicBlock* bb  = Dec->getOrCreateBasicBlock(bb_name.str(), BB->getParent());
-  IRB->CreateBr(bb);
+  uint64_t target = Dec->getDisassembler()->getDebugOffset(I->getDebugLoc())+ I->getDesc().getSize() + off;
+  Value* target_val = get_imm_val(target, 64, 64);
+  IRB->CreateCall(BB->getParent()->getParent()->getFunction("saib_branch"), std::vector<Value*>({target_val, get_imm_val(0, 64, 64), get_imm_val(1, 1, 1)}));
 }
