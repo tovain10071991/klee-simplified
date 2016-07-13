@@ -745,10 +745,6 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
         if (&current == falseState) swapInfo = true;
         seedMap.erase(falseState);
       }
-      if (swapInfo) {
-        std::swap(trueState->coveredNew, falseState->coveredNew);
-        std::swap(trueState->coveredLines, falseState->coveredLines);
-      }
     }
 
     current.ptreeNode->data = 0;
@@ -1353,13 +1349,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
              "Wrong operand index!");
       ref<Expr> cond = eval(ki, 0, state).value;
       Executor::StatePair branches = fork(state, cond, false);
-
-      // NOTE: There is a hidden dependency here, markBranchVisited
-      // requires that we still be in the context of the branch
-      // instruction (it reuses its statistic id). Should be cleaned
-      // up with convenient instruction specific data.
-      if (statsTracker && state.stack.back().kf->trackCoverage)
-        statsTracker->markBranchVisited(branches.first, branches.second);
 
       if (branches.first)
         transferToBasicBlock(bi->getSuccessor(0), bi->getParent(), *branches.first);
@@ -2354,41 +2343,6 @@ void Executor::bindModuleConstants() {
   }
 }
 
-void Executor::checkMemoryUsage() {
-  if (!MaxMemory)
-    return;
-  if ((stats::instructions & 0xFFFF) == 0) {
-    // We need to avoid calling GetTotalMallocUsage() often because it
-    // is O(elts on freelist). This is really bad since we start
-    // to pummel the freelist once we hit the memory cap.
-    unsigned mbs = (util::GetTotalMallocUsage() >> 20) +
-                   (memory->getUsedDeterministicSize() >> 20);
-
-    if (mbs > MaxMemory) {
-      if (mbs > MaxMemory + 100) {
-        // just guess at how many to kill
-        unsigned numStates = states.size();
-        unsigned toKill = std::max(1U, numStates - numStates * MaxMemory / mbs);
-        klee_warning("killing %d states (over memory cap)", toKill);
-        std::vector<ExecutionState *> arr(states.begin(), states.end());
-        for (unsigned i = 0, N = arr.size(); N && i < toKill; ++i, --N) {
-          unsigned idx = rand() % N;
-          // Make two pulls to try and not hit a state that
-          // covered new code.
-          if (arr[idx]->coveredNew)
-            idx = rand() % N;
-
-          std::swap(arr[idx], arr[N - 1]);
-          terminateStateEarly(*arr[N - 1], "Memory limit exceeded.");
-        }
-      }
-      atMemoryLimit = true;
-    } else {
-      atMemoryLimit = false;
-    }
-  }
-}
-
 void Executor::doDumpStates() {
   if (!DumpStatesOnHalt || states.empty())
     return;
@@ -2421,8 +2375,6 @@ void Executor::run(ExecutionState &initialState) {
 
     executeInstruction(state, ki);
     processTimers(&state, MaxInstructionTime);
-
-    checkMemoryUsage();
 
     updateStates(&state);
   }
@@ -3176,7 +3128,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
 
 void Executor::getCoveredLines(const ExecutionState &state,
                                std::map<const std::string*, std::set<unsigned> > &res) {
-  res = state.coveredLines;
+  assert(0);
 }
 
 void Executor::doImpliedValueConcretization(ExecutionState &state,

@@ -104,18 +104,11 @@ namespace {
 KModule::KModule(Module *_module) 
   : module(_module),
     targetData(new DataLayout(module)),
-    kleeMergeFn(0),
-    infos(0),
     constantTable(0) {
 }
 
 KModule::~KModule() {
   delete[] constantTable;
-  delete infos;
-
-  for (std::vector<KFunction*>::iterator it = functions.begin(), 
-         ie = functions.end(); it != ie; ++it)
-    delete *it;
 
   for (std::map<llvm::Constant*, KConstant*>::iterator it=constantMap.begin(),
       itE=constantMap.end(); it!=itE;++it)
@@ -156,23 +149,8 @@ static void forceImport(Module *m, const char *name, LLVM_TYPE_Q Type *retType,
 }
 #endif
 
-
-void KModule::addInternalFunction(const char* functionName){
-  Function* internalFunction = module->getFunction(functionName);
-  if (!internalFunction) {
-    KLEE_DEBUG(klee_warning(
-        "Failed to add internal function %s. Not found.", functionName));
-    return ;
-  }
-  KLEE_DEBUG(klee_message("Added function %s.",functionName));
-  internalFunctions.insert(internalFunction);
-}
-
 void KModule::prepare(const Interpreter::ModuleOptions &opts,
-                      InterpreterHandler *ih) {
-  /* Build shadow structures */
-  infos = new InstructionInfoTable(module);
-  
+                      InterpreterHandler *ih) {  
   for (Module::iterator it = module->begin(), ie = module->end();
        it != ie; ++it) {
     if (it->isDeclaration())
@@ -180,12 +158,6 @@ void KModule::prepare(const Interpreter::ModuleOptions &opts,
 
     KFunction *kf = new KFunction(it, this);
     
-    for (unsigned i=0; i<kf->numInstructions; ++i) {
-      KInstruction *ki = kf->instructions[i];
-      ki->info = &infos->getInfo(ki->inst);
-    }
-
-    functions.push_back(kf);
     functionMap.insert(std::make_pair(it, kf));
   }
 }
@@ -241,8 +213,7 @@ KFunction::KFunction(llvm::Function *_function,
                      KModule *km) 
   : function(_function),
     numArgs(function->arg_size()),
-    numInstructions(0),
-    trackCoverage(true) {
+    numInstructions(0) {
   for (llvm::Function::iterator bbit = function->begin(), 
          bbie = function->end(); bbit != bbie; ++bbit) {
     BasicBlock *bb = bbit;

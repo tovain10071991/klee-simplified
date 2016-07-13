@@ -30,7 +30,6 @@ struct KFunction;
 struct KInstruction;
 class MemoryObject;
 class PTreeNode;
-struct InstructionInfo;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
@@ -109,26 +108,8 @@ public:
   /// @brief Exploration depth, i.e., number of times KLEE branched for this state
   unsigned depth;
 
-  /// @brief History of complete path: represents branches taken to
-  /// reach/create this state (both concrete and symbolic)
-  TreeOStream pathOS;
-
-  /// @brief History of symbolic path: represents symbolic branches
-  /// taken to reach/create this state
-  TreeOStream symPathOS;
-
-  /// @brief Counts how many instructions were executed since the last new
-  /// instruction was covered.
-  unsigned instsSinceCovNew;
-
-  /// @brief Whether a new instruction was covered in this state
-  bool coveredNew;
-
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled;
-
-  /// @brief Set containing which lines in which files are covered by this state
-  std::map<const std::string *, std::set<unsigned> > coveredLines;
 
   /// @brief Pointer to the process tree of the current state
   PTreeNode *ptreeNode;
