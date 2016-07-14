@@ -59,7 +59,7 @@ namespace klee {
   class InstructionInfoTable;
   struct KFunction;
   struct KInstruction;
-  class KInstIterator;
+  // class KInstIterator;
   class KModule;
   class MemoryManager;
   class MemoryObject;
@@ -193,9 +193,6 @@ private:
                                     ExecutionState &state);
   
   void executeInstruction(ExecutionState &state, KInstruction *ki);
-
-  void printFileLine(ExecutionState &state, KInstruction *ki,
-                     llvm::raw_ostream &file);
 
   void run(ExecutionState &initialState);
 

@@ -15,15 +15,11 @@
 namespace klee {
 namespace stats {
 
-  extern Statistic allocations;
   extern Statistic resolveTime;
-  extern Statistic instructions;
   extern Statistic instructionTime;
   extern Statistic instructionRealTime;
-  extern Statistic coveredInstructions;
   extern Statistic uncoveredInstructions;  
   extern Statistic trueBranches;
-  extern Statistic falseBranches;
   extern Statistic forkTime;
   extern Statistic solverTime;
 

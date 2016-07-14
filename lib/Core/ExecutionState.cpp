@@ -37,7 +37,7 @@ using namespace klee;
 
 /***/
 
-StackFrame::StackFrame(KInstIterator _caller, KFunction *_kf)
+StackFrame::StackFrame(uint64_t _caller, KFunction *_kf)
   : caller(_caller), kf(_kf), callPathNode(0), 
     minDistToUncoveredOnReturn(0), varargs(0) {
   locals = new Cell[kf->numRegisters];
@@ -62,7 +62,7 @@ StackFrame::~StackFrame() {
 /***/
 
 ExecutionState::ExecutionState(KFunction *kf) :
-    pc(kf->instructions),
+    pc(inst_addr_set[kf->instructions[0]]),
     prevPC(pc),
 
     queryCost(0.), 
@@ -123,7 +123,7 @@ ExecutionState *ExecutionState::branch() {
   return falseState;
 }
 
-void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
+void ExecutionState::pushFrame(uint64_t caller, KFunction *kf) {
   stack.push_back(StackFrame(caller,kf));
 }
 

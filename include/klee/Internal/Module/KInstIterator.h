@@ -10,7 +10,7 @@
 #ifndef KLEE_KINSTITERATOR_H
 #define KLEE_KINSTITERATOR_H
 
-namespace klee {
+namespace {
   struct KInstruction;
 
   class KInstIterator {

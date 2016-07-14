@@ -96,7 +96,6 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
   if (!address)
     return 0;
 
-  ++stats::allocations;
   MemoryObject *res = new MemoryObject(address, size, isLocal, isGlobal, false,
                                        allocSite, this);
   objects.insert(res);
@@ -114,7 +113,6 @@ MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
   }
 #endif
 
-  ++stats::allocations;
   MemoryObject *res =
       new MemoryObject(address, size, false, true, true, allocSite, this);
   objects.insert(res);

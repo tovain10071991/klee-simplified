@@ -10,6 +10,8 @@
 #ifndef KLEE_EXECUTIONSTATE_H
 #define KLEE_EXECUTIONSTATE_H
 
+#include "llvm/IR/Instructions.h"
+
 #include "klee/Constraints.h"
 #include "klee/Expr.h"
 #include "klee/Internal/ADT/TreeStream.h"
@@ -33,8 +35,13 @@ class PTreeNode;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
+extern std::map<uint64_t, KInstruction*> addr_inst_set;
+extern std::map<KInstruction*, uint64_t> inst_addr_set;
+
+
 struct StackFrame {
-  KInstIterator caller;
+  // KInstIterator caller;
+  uint64_t caller;
   KFunction *kf;
   CallPathNode *callPathNode;
 
@@ -55,7 +62,7 @@ struct StackFrame {
   // of intrinsic lowering.
   MemoryObject *varargs;
 
-  StackFrame(KInstIterator caller, KFunction *kf);
+  StackFrame(uint64_t caller, KFunction *kf);
   StackFrame(const StackFrame &s);
   ~StackFrame();
 };
@@ -76,10 +83,12 @@ public:
 
   /// @brief Pointer to instruction to be executed after the current
   /// instruction
-  KInstIterator pc;
+  // KInstIterator pc;
+  uint64_t pc;
 
   /// @brief Pointer to instruction which is currently executed
-  KInstIterator prevPC;
+  // KInstIterator prevPC;
+  uint64_t prevPC;
 
   /// @brief Stack representing the current instruction stream
   stack_ty stack;
@@ -142,7 +151,7 @@ public:
 
   ExecutionState *branch();
 
-  void pushFrame(KInstIterator caller, KFunction *kf);
+  void pushFrame(uint64_t caller, KFunction *kf);
   void popFrame();
 
   void addSymbolic(const MemoryObject *mo, const Array *array);
