@@ -98,6 +98,11 @@ namespace {
                               cl::desc("Print functions whose address is taken."));
 }
 
+namespace klee {
+  std::map<uint64_t, KInstruction*> addr_inst_set;
+  std::map<KInstruction*, uint64_t> inst_addr_set;
+}
+
 KModule::KModule(Module *_module) 
   : module(_module),
     targetData(new DataLayout(module)),
@@ -206,6 +211,12 @@ static int getOperandNum(Value *v,
   }
 }
 
+uint64_t addr_count = 0;
+uint64_t get_inst_addr(Instruction* inst)
+{
+  return addr_count++;
+}
+
 KFunction::KFunction(llvm::Function *_function,
                      KModule *km) 
   : function(_function),
@@ -217,8 +228,6 @@ KFunction::KFunction(llvm::Function *_function,
     basicBlockEntry[bb] = numInstructions;
     numInstructions += bb->size();
   }
-
-  instructions = new KInstruction*[numInstructions];
 
   std::map<Instruction*, unsigned> registerMap;
 
@@ -270,13 +279,16 @@ KFunction::KFunction(llvm::Function *_function,
         }
       }
 
-      instructions[i++] = ki;
+      instructions.push_back(ki);
+      uint64_t addr = get_inst_addr(ki->inst);
+      inst_addr_set[ki] = addr;
+      addr_inst_set[addr] = ki;
     }
   }
 }
 
 KFunction::~KFunction() {
-  for (unsigned i=0; i<numInstructions; ++i)
-    delete instructions[i];
-  delete[] instructions;
+  // for (unsigned i=0; i<numInstructions; ++i)
+    // delete instructions[i];
+  // delete[] instructions;
 }

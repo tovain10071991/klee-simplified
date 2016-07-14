@@ -63,8 +63,8 @@ static const double kSecondsPerTick = .1;
 static volatile unsigned timerTicks = 0;
 
 // XXX hack
-extern "C" unsigned dumpStates, dumpPTree;
-unsigned dumpStates = 0, dumpPTree = 0;
+extern "C" unsigned dumpStates;
+unsigned dumpStates = 0;
 
 static void onAlarm(int) {
   ++timerTicks;
@@ -117,19 +117,7 @@ void Executor::processTimers(ExecutionState *current,
     ticks = 1;
   }
 
-  if (ticks || dumpPTree || dumpStates) {
-    if (dumpPTree) {
-      char name[32];
-      sprintf(name, "ptree%08d.dot", (int) stats::instructions);
-      llvm::raw_ostream *os = interpreterHandler->openOutputFile(name);
-      if (os) {
-        processTree->dump(*os);
-        delete os;
-      }
-      
-      dumpPTree = 0;
-    }
-
+  if (ticks || dumpStates) {
     if (maxInstTime > 0 && current &&
         std::find(removedStates.begin(), removedStates.end(), current) ==
             removedStates.end()) {

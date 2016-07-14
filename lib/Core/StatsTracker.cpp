@@ -157,9 +157,6 @@ StatsTracker::~StatsTracker() {
 void StatsTracker::done() {
 }
 
-void StatsTracker::stepInstruction(ExecutionState &es) {
-}
-
 double StatsTracker::elapsed() {
   return util::getWallTime() - startWallTime;
 }

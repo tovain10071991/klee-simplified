@@ -272,11 +272,6 @@ namespace {
            cl::init(0));
   
   cl::opt<unsigned>
-  MaxForks("max-forks",
-           cl::desc("Only fork this many times (default=-1 (off))"),
-           cl::init(~0u));
-  
-  cl::opt<unsigned>
   MaxDepth("max-depth",
            cl::desc("Only allow this many symbolic branches (default=0 (off))"),
            cl::init(0));
@@ -489,31 +484,20 @@ void Executor::branch(ExecutionState &state,
   unsigned N = conditions.size();
   assert(N);
 
-  if (MaxForks!=~0u && stats::forks >= MaxForks) {
-    unsigned next = theRNG.getInt32() % N;
-    for (unsigned i=0; i<N; ++i) {
-      if (i == next) {
-        result.push_back(&state);
-      } else {
-        result.push_back(NULL);
-      }
-    }
-  } else {
-    stats::forks += N-1;
+  stats::forks += N-1;
 
-    // XXX do proper balance or keep random?
-    result.push_back(&state);
-    for (unsigned i=1; i<N; ++i) {
-      ExecutionState *es = result[theRNG.getInt32() % i];
-      ExecutionState *ns = es->branch();
-      addedStates.push_back(ns);
-      result.push_back(ns);
-      es->ptreeNode->data = 0;
-      std::pair<PTree::Node*,PTree::Node*> res = 
-        processTree->split(es->ptreeNode, ns, es);
-      ns->ptreeNode = res.first;
-      es->ptreeNode = res.second;
-    }
+  // XXX do proper balance or keep random?
+  result.push_back(&state);
+  for (unsigned i=1; i<N; ++i) {
+    ExecutionState *es = result[theRNG.getInt32() % i];
+    ExecutionState *ns = es->branch();
+    addedStates.push_back(ns);
+    result.push_back(ns);
+    es->ptreeNode->data = 0;
+    std::pair<PTree::Node*,PTree::Node*> res = 
+      processTree->split(es->ptreeNode, ns, es);
+    ns->ptreeNode = res.first;
+    es->ptreeNode = res.second;
   }
 
   // If necessary redistribute seeds to match conditions, killing
@@ -639,8 +623,7 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
       
       if ((MaxMemoryInhibit && atMemoryLimit) || 
           current.forkDisabled ||
-          inhibitForking || 
-          (MaxForks!=~0u && stats::forks >= MaxForks)) {
+          inhibitForking) {
 
 	if (MaxMemoryInhibit && atMemoryLimit)
 	  klee_warning_once(0, "skipping fork (memory cap exceeded)");
@@ -984,13 +967,13 @@ void Executor::executeGetValue(ExecutionState &state,
   }
 }
 
-void Executor::stepInstruction(ExecutionState &state) {
-  if (statsTracker)
-    statsTracker->stepInstruction(state);
+size_t get_inst_size(Instruction* inst) {
+  return 1;
+}
 
-  ++stats::instructions;
+void Executor::stepInstruction(ExecutionState &state) {
   state.prevPC = state.pc;
-  ++state.pc;
+  state.pc += get_inst_size(addr_inst_set[state.pc]->inst);
 }
 
 void Executor::executeCall(ExecutionState &state, 
@@ -1068,7 +1051,7 @@ void Executor::executeCall(ExecutionState &state,
     // from just an instruction (unlike LLVM).
     KFunction *kf = kmodule->functionMap[f];
     state.pushFrame(state.prevPC, kf);
-    state.pc = kf->instructions;
+    state.pc = inst_addr_set[kf->instructions[0]];
 
      // TODO: support "byval" parameter attribute
      // TODO: support zeroext, signext, sret attributes
@@ -1117,7 +1100,7 @@ void Executor::executeCall(ExecutionState &state,
       }
 
       MemoryObject *mo = sf.varargs =
-          memory->allocate(size, true, false, state.prevPC->inst,
+          memory->allocate(size, true, false, addr_inst_set[state.prevPC]->inst,
                            (requires16ByteAlignment ? 16 : 8));
       if (!mo && size) {
         terminateStateOnExecError(state, "out of memory (varargs)");
@@ -1177,9 +1160,9 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   // XXX this lookup has to go ?
   KFunction *kf = state.stack.back().kf;
   unsigned entry = kf->basicBlockEntry[dst];
-  state.pc = &kf->instructions[entry];
-  if (state.pc->inst->getOpcode() == Instruction::PHI) {
-    PHINode *first = static_cast<PHINode*>(state.pc->inst);
+  state.pc = inst_addr_set[kf->instructions[entry]];
+  if (addr_inst_set[state.pc]->inst->getOpcode() == Instruction::PHI) {
+    PHINode *first = static_cast<PHINode*>(addr_inst_set[state.pc]->inst);
     state.incomingBBIndex = first->getBasicBlockIndex(src);
   }
 }
@@ -1250,8 +1233,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     // Control flow
   case Instruction::Ret: {
     ReturnInst *ri = cast<ReturnInst>(i);
-    KInstIterator kcaller = state.stack.back().caller;
-    Instruction *caller = kcaller ? kcaller->inst : 0;
+    uint64_t kcaller = state.stack.back().caller;
+    Instruction *caller = addr_inst_set.find(kcaller)!=addr_inst_set.end() ? addr_inst_set[kcaller]->inst : 0;
     bool isVoidReturn = (ri->getNumOperands() == 0);
     ref<Expr> result = ConstantExpr::alloc(0, Expr::Bool);
     
@@ -1298,7 +1281,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
             }
           }
 
-          bindLocal(kcaller, state, result);
+          bindLocal(addr_inst_set[kcaller], state, result);
         }
       } else {
         // We check that the return value has no users instead of
@@ -2333,7 +2316,7 @@ void Executor::run(ExecutionState &initialState) {
 
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    KInstruction *ki = state.pc;
+    KInstruction *ki = addr_inst_set[state.pc];
     stepInstruction(state);
 
     executeInstruction(state, ki);
@@ -2589,7 +2572,7 @@ void Executor::executeAlloc(ExecutionState &state,
   size = toUnique(state, size);
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(size)) {
     MemoryObject *mo = memory->allocate(CE->getZExtValue(), isLocal, false, 
-                                        state.prevPC->inst);
+                                        addr_inst_set[state.prevPC]->inst);
     if (!mo) {
       bindLocal(target, state, 
                 ConstantExpr::alloc(0, Context::get().getPointerWidth()));

@@ -40,13 +40,16 @@ namespace klee {
   class KModule;
   template<class T> class ref;
 
+  extern std::map<uint64_t, KInstruction*> addr_inst_set;
+  extern std::map<KInstruction*, uint64_t> inst_addr_set;
+
   struct KFunction {
     llvm::Function *function;
 
     unsigned numArgs, numRegisters;
 
     unsigned numInstructions;
-    KInstruction **instructions;
+    std::vector<KInstruction *> instructions;
 
     std::map<llvm::BasicBlock*, unsigned> basicBlockEntry;
 

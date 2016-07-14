@@ -59,7 +59,7 @@ namespace klee {
   class InstructionInfoTable;
   struct KFunction;
   struct KInstruction;
-  class KInstIterator;
+  // class KInstIterator;
   class KModule;
   class MemoryManager;
   class MemoryObject;

@@ -53,10 +53,6 @@ namespace klee {
     // called when execution is done and stats files should be flushed
     void done();
 
-    // process stats for a single instruction step, es is the state
-    // about to be stepped
-    void stepInstruction(ExecutionState &es);
-
     /// Return time in seconds since execution start.
     double elapsed();
   };
