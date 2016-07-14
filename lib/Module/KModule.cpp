@@ -211,7 +211,7 @@ static int getOperandNum(Value *v,
   }
 }
 
-uint64_t addr_count = 0;
+uint64_t addr_count = 1;
 uint64_t get_inst_addr(Instruction* inst)
 {
   return addr_count++;
