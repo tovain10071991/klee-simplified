@@ -215,6 +215,9 @@ vector<map_t> get_data_segments()
   assert(fd);
   size_t nitems = fread(mappings, 150, 80, fd);
   assert(nitems<80);
+  
+  size_t stack_size = get_stack_size();
+  
   for(line = strtok(mappings, "\n"); line; line = strtok(NULL, "\n"))
   {
     uint64_t addr, endaddr, offset, inode;
@@ -225,7 +228,6 @@ vector<map_t> get_data_segments()
     
     if(!string(filename).compare("[stack]"))
     {
-      size_t stack_size = get_stack_size();
       addr = endaddr - stack_size;
     }
     

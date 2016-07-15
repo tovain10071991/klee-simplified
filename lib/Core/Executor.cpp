@@ -107,6 +107,7 @@
 #include <errno.h>
 #include <cxxabi.h>
 
+#include "Helper/DecompileHelper.h"
 #include "Helper/MapsHelper.h"
 #include "Helper/ptraceHelper.h"
 
@@ -434,6 +435,17 @@ extern void *__dso_handle __attribute__ ((__weak__));
 void Executor::initializeGlobals(ExecutionState &state) {
   Module *m = kmodule->module;
 
+  // alloca data sections
+  std::vector<map_t> data_segments = get_data_segments();
+  for(auto iter = data_segments.begin(); iter != data_segments.end(); ++iter)
+  {
+    errs() << iter->filename << ": " << iter->addr << " ~ " << iter->endaddr << "\n";
+    MemoryObject *mo = memory->allocateFixed(iter->addr, iter->endaddr-iter->addr, NULL);
+    mo->setName(iter->filename);
+    mo->lazy_populate.reset();
+    bindObjectInState(state, mo, false);
+  }
+
   // represent function globals using the address of the actual llvm function
   // object. given that we use malloc to allocate memory in states this also
   // ensures that we won't conflict. we don't need to allocate a memory object
@@ -463,8 +475,8 @@ void Executor::initializeGlobals(ExecutionState &state) {
     MemoryObject *mo = memory->allocate(size, false, true, &*i);
     if (!mo)
       llvm::report_fatal_error("out of memory");
+    mo->setName(i->getName().data());      
     ObjectState *os = bindObjectInState(state, mo, false);
-    mo->setName(i->getName().data());
     globalObjects.insert(std::make_pair(i, mo));
     globalAddresses.insert(std::make_pair(i, mo->getBaseExpr()));
 
@@ -989,7 +1001,15 @@ size_t get_inst_size(Instruction* inst) {
 
 void Executor::stepInstruction(ExecutionState &state) {
   state.prevPC = state.pc;
-  state.pc += get_inst_size(addr_inst_set[state.pc]->inst);
+  state.pc++;
+  if(idx_inst_set.find(state.pc)==idx_inst_set.end())
+  {
+    uint64_t inst_addr = inst_addr_set[idx_inst_set[state.prevPC]->inst];
+    inst_addr += addr_size_set[inst_addr];
+    decompile_inst(inst_addr);
+    kmodule->addInfo();
+    assert(state.pc == addr_idx_set[inst_addr]);
+  }
 }
 
 void Executor::executeCall(ExecutionState &state, 
@@ -999,191 +1019,22 @@ void Executor::executeCall(ExecutionState &state,
   Instruction *i = ki->inst;
   assert(specialFunctionHandler->handle(state, f, ki, arguments));
   return;
-  if (f && f->isDeclaration()) {
-    switch(f->getIntrinsicID()) {
-    case Intrinsic::not_intrinsic:
-      // state may be destroyed by this call, cannot touch
-      callExternalFunction(state, ki, f, arguments);
-      break;
-        
-      // va_arg is handled by caller and intrinsic lowering, see comment for
-      // ExecutionState::varargs
-    case Intrinsic::vastart:  {
-      StackFrame &sf = state.stack.back();
-
-      // varargs can be zero if no varargs were provided
-      if (!sf.varargs)
-        return;
-
-      // FIXME: This is really specific to the architecture, not the pointer
-      // size. This happens to work fir x86-32 and x86-64, however.
-      Expr::Width WordSize = Context::get().getPointerWidth();
-      if (WordSize == Expr::Int32) {
-        executeMemoryOperation(state, true, arguments[0], 
-                               sf.varargs->getBaseExpr(), 0);
-      } else {
-        assert(WordSize == Expr::Int64 && "Unknown word size!");
-
-        // X86-64 has quite complicated calling convention. However,
-        // instead of implementing it, we can do a simple hack: just
-        // make a function believe that all varargs are on stack.
-        executeMemoryOperation(state, true, arguments[0],
-                               ConstantExpr::create(48, 32), 0); // gp_offset
-        executeMemoryOperation(state, true,
-                               AddExpr::create(arguments[0], 
-                                               ConstantExpr::create(4, 64)),
-                               ConstantExpr::create(304, 32), 0); // fp_offset
-        executeMemoryOperation(state, true,
-                               AddExpr::create(arguments[0], 
-                                               ConstantExpr::create(8, 64)),
-                               sf.varargs->getBaseExpr(), 0); // overflow_arg_area
-        executeMemoryOperation(state, true,
-                               AddExpr::create(arguments[0], 
-                                               ConstantExpr::create(16, 64)),
-                               ConstantExpr::create(0, 64), 0); // reg_save_area
-      }
-      break;
-    }
-    case Intrinsic::vaend:
-      // va_end is a noop for the interpreter.
-      //
-      // FIXME: We should validate that the target didn't do something bad
-      // with vaeend, however (like call it twice).
-      break;
-        
-    case Intrinsic::vacopy:
-      // va_copy should have been lowered.
-      //
-      // FIXME: It would be nice to check for errors in the usage of this as
-      // well.
-    default:
-      klee_error("unknown intrinsic: %s", f->getName().data());
-    }
-
-    if (InvokeInst *ii = dyn_cast<InvokeInst>(i))
-      transferToBasicBlock(ii->getNormalDest(), i->getParent(), state);
-  } else {
-    // FIXME: I'm not really happy about this reliance on prevPC but it is ok, I
-    // guess. This just done to avoid having to pass KInstIterator everywhere
-    // instead of the actual instruction, since we can't make a KInstIterator
-    // from just an instruction (unlike LLVM).
-    KFunction *kf = kmodule->functionMap[f];
-    state.pushFrame(state.prevPC, kf);
-    state.pc = inst_addr_set[kf->instructions[0]];
-
-     // TODO: support "byval" parameter attribute
-     // TODO: support zeroext, signext, sret attributes
-
-    unsigned callingArgs = arguments.size();
-    unsigned funcArgs = f->arg_size();
-    if (!f->isVarArg()) {
-      if (callingArgs > funcArgs) {
-        klee_warning_once(f, "calling %s with extra arguments.", 
-                          f->getName().data());
-      } else if (callingArgs < funcArgs) {
-        terminateStateOnError(state, "calling function with too few arguments", 
-                              "user.err");
-        return;
-      }
-    } else {
-      Expr::Width WordSize = Context::get().getPointerWidth();
-
-      if (callingArgs < funcArgs) {
-        terminateStateOnError(state, "calling function with too few arguments", 
-                              "user.err");
-        return;
-      }
-
-      StackFrame &sf = state.stack.back();
-      unsigned size = 0;
-      bool requires16ByteAlignment = false;
-      for (unsigned i = funcArgs; i < callingArgs; i++) {
-        // FIXME: This is really specific to the architecture, not the pointer
-        // size. This happens to work for x86-32 and x86-64, however.
-        if (WordSize == Expr::Int32) {
-          size += Expr::getMinBytesForWidth(arguments[i]->getWidth());
-        } else {
-          Expr::Width argWidth = arguments[i]->getWidth();
-          // AMD64-ABI 3.5.7p5: Step 7. Align l->overflow_arg_area upwards to a
-          // 16 byte boundary if alignment needed by type exceeds 8 byte
-          // boundary.
-          //
-          // Alignment requirements for scalar types is the same as their size
-          if (argWidth > Expr::Int64) {
-             size = llvm::RoundUpToAlignment(size, 16);
-             requires16ByteAlignment = true;
-          }
-          size += llvm::RoundUpToAlignment(argWidth, WordSize) / 8;
-        }
-      }
-
-      MemoryObject *mo = sf.varargs =
-          memory->allocate(size, true, false, addr_inst_set[state.prevPC]->inst,
-                           (requires16ByteAlignment ? 16 : 8));
-      if (!mo && size) {
-        terminateStateOnExecError(state, "out of memory (varargs)");
-        return;
-      }
-
-      if (mo) {
-        if ((WordSize == Expr::Int64) && (mo->address & 15) &&
-            requires16ByteAlignment) {
-          // Both 64bit Linux/Glibc and 64bit MacOSX should align to 16 bytes.
-          klee_warning_once(
-              0, "While allocating varargs: malloc did not align to 16 bytes.");
-        }
-
-        ObjectState *os = bindObjectInState(state, mo, true);
-        unsigned offset = 0;
-        for (unsigned i = funcArgs; i < callingArgs; i++) {
-          // FIXME: This is really specific to the architecture, not the pointer
-          // size. This happens to work for x86-32 and x86-64, however.
-          if (WordSize == Expr::Int32) {
-            os->write(offset, arguments[i]);
-            offset += Expr::getMinBytesForWidth(arguments[i]->getWidth());
-          } else {
-            assert(WordSize == Expr::Int64 && "Unknown word size!");
-
-            Expr::Width argWidth = arguments[i]->getWidth();
-            if (argWidth > Expr::Int64) {
-              offset = llvm::RoundUpToAlignment(offset, 16);
-            }
-            os->write(offset, arguments[i]);
-            offset += llvm::RoundUpToAlignment(argWidth, WordSize) / 8;
-          }
-        }
-      }
-    }
-
-    unsigned numFormals = f->arg_size();
-    for (unsigned i=0; i<numFormals; ++i) 
-      bindArgument(kf, i, state, arguments[i]);
-  }
 }
 
 void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src, 
                                     ExecutionState &state) {
-  // Note that in general phi nodes can reuse phi values from the same
-  // block but the incoming value is the eval() result *before* the
-  // execution of any phi nodes. this is pathological and doesn't
-  // really seem to occur, but just in case we run the PhiCleanerPass
-  // which makes sure this cannot happen and so it is safe to just
-  // eval things in order. The PhiCleanerPass also makes sure that all
-  // incoming blocks have the same order for each PHINode so we only
-  // have to compute the index once.
-  //
-  // With that done we simply set an index in the state so that PHI
-  // instructions know which argument to eval, set the pc, and continue.
-  
-  // XXX this lookup has to go ?
-  KFunction *kf = state.stack.back().kf;
-  unsigned entry = kf->basicBlockEntry[dst];
-  state.pc = inst_addr_set[kf->instructions[entry]];
-  if (addr_inst_set[state.pc]->inst->getOpcode() == Instruction::PHI) {
-    PHINode *first = static_cast<PHINode*>(addr_inst_set[state.pc]->inst);
-    state.incomingBBIndex = first->getBasicBlockIndex(src);
-  }
+  assert(0);
 }
+
+void Executor::transferToBasicBlockByAddr(uint64_t inst_addr, 
+                                    ExecutionState &state) {
+  if(addr_idx_set.find(inst_addr)==addr_idx_set.end())
+  {
+    decompile_inst(inst_addr);
+    kmodule->addInfo();
+   }
+  state.pc = addr_idx_set[inst_addr];
+ }
 
 /// Compute the true target of a function call, resolving LLVM and KLEE aliases
 /// and bitcasts.
@@ -1254,7 +1105,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   case Instruction::Ret: {
     ReturnInst *ri = cast<ReturnInst>(i);
     uint64_t kcaller = state.stack.back().caller;
-    Instruction *caller = addr_inst_set.find(kcaller)!=addr_inst_set.end() ? addr_inst_set[kcaller]->inst : 0;
+    Instruction *caller = idx_inst_set.find(kcaller)!=idx_inst_set.end() ? idx_inst_set[kcaller]->inst : 0;
     bool isVoidReturn = (ri->getNumOperands() == 0);
     ref<Expr> result = ConstantExpr::alloc(0, Expr::Bool);
     
@@ -1301,7 +1152,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
             }
           }
 
-          bindLocal(addr_inst_set[kcaller], state, result);
+          bindLocal(idx_inst_set[kcaller], state, result);
           llvm::errs() << "=====return value=====\n";
           result->dump();
           llvm::errs() << "\n";
@@ -2377,7 +2228,7 @@ void Executor::run(ExecutionState &initialState) {
 
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    KInstruction *ki = addr_inst_set[state.pc];
+    KInstruction *ki = idx_inst_set[state.pc];
     stepInstruction(state);
 
     executeInstruction(state, ki);
@@ -2634,7 +2485,7 @@ void Executor::executeAlloc(ExecutionState &state,
   size = toUnique(state, size);
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(size)) {
     MemoryObject *mo = memory->allocate(CE->getZExtValue(), isLocal, false, 
-                                        addr_inst_set[state.prevPC]->inst);
+                                        idx_inst_set[state.prevPC]->inst);
     if (!mo) {
       bindLocal(target, state, 
                 ConstantExpr::alloc(0, Context::get().getPointerWidth()));
@@ -2644,6 +2495,7 @@ void Executor::executeAlloc(ExecutionState &state,
         os->initializeToZero();
       } else {
         os->initializeToRandom();
+        executeMakeSymbolic(state, mo, (target->inst->hasName()?target->inst->getName().data():std::string("noname")));
       }
       bindLocal(target, state, mo->getBaseExpr());
       
@@ -2857,16 +2709,22 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         } else {
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
           wos->write(offset, value);
+          llvm::errs() << "==========writing memeory==========\n";
+          value->dump();
+          llvm::errs() << "\n";
           if(value->from_extern)
             executeMakeSymbolic(state, mo, std::string("noname"));
         }          
       } else {
-        ref<Expr> result = const_cast<ObjectState*>(os)->read(mo->getOffsetExpr(address), type);
+        ref<Expr> result = const_cast<ObjectState*>(os)->read(offset, type);
         
         if (interpreterOpts.MakeConcreteSymbolic)
           result = replaceReadWithSymbolic(state, result);
         
         bindLocal(target, state, result);
+        llvm::errs() << "==========read memeory==========\n";
+        result->dump();
+        llvm::errs() << "\n";
       }
 
       return;
@@ -2903,6 +2761,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         } else {
           ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
           wos->write(mo->getOffsetExpr(address), value);
+          if(value->from_extern)
+            executeMakeSymbolic(state, mo, std::string("noname"));
         }
       } else {
          ref<Expr> result = const_cast<ObjectState*>(os)->read(mo->getOffsetExpr(address), type);

@@ -13,6 +13,8 @@
 #include "klee/Config/Version.h"
 #include "klee/Interpreter.h"
 
+#include "klee/Internal/Module/KInstruction.h"
+
 #include <map>
 #include <set>
 #include <vector>
@@ -30,6 +32,10 @@ namespace llvm {
 #endif
 }
 
+extern std::map<uint64_t, klee::KInstruction*> idx_inst_set;
+extern std::map<klee::KInstruction*, uint64_t> inst_idx_set;
+extern std::map<uint64_t, uint64_t> addr_idx_set;
+
 namespace klee {
   struct Cell;
   class Executor;
@@ -40,9 +46,6 @@ namespace klee {
   class KModule;
   template<class T> class ref;
 
-  extern std::map<uint64_t, KInstruction*> addr_inst_set;
-  extern std::map<KInstruction*, uint64_t> inst_addr_set;
-
   struct KFunction {
     llvm::Function *function;
 
@@ -51,8 +54,6 @@ namespace klee {
     unsigned numInstructions;
     std::vector<KInstruction *> instructions;
 
-    std::map<llvm::BasicBlock*, unsigned> basicBlockEntry;
-
   private:
     KFunction(const KFunction&);
     KFunction &operator=(const KFunction&);
@@ -60,6 +61,8 @@ namespace klee {
   public:
     explicit KFunction(llvm::Function*, KModule *);
     ~KFunction();
+
+    void addInfo(llvm::Instruction* inst, KModule* km);
 
     unsigned getArgRegister(unsigned index) { return index; }
   };
@@ -93,7 +96,8 @@ namespace klee {
     
     // Our shadow versions of LLVM structures.
     std::map<llvm::Function*, KFunction*> functionMap;
-
+    KFunction* kfunction;
+    
     std::vector<llvm::Constant*> constants;
     std::map<llvm::Constant*, KConstant*> constantMap;
     KConstant* getKConstant(llvm::Constant *c);
@@ -109,7 +113,7 @@ namespace klee {
     // FIXME: ihandler should not be here
     void prepare(const Interpreter::ModuleOptions &opts, 
                  InterpreterHandler *ihandler);
-
+    void addInfo();
     /// Return an id for the given constant, creating a new one if necessary.
     unsigned getConstantID(llvm::Constant *c, KInstruction* ki);
   };

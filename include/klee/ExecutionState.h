@@ -35,9 +35,6 @@ class PTreeNode;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
-extern std::map<uint64_t, KInstruction*> addr_inst_set;
-extern std::map<KInstruction*, uint64_t> inst_addr_set;
-
 
 struct StackFrame {
   // KInstIterator caller;

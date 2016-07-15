@@ -9,13 +9,11 @@ int64_t init_Jcc(MachineInstr* I)
 
 void IREmitter::Jcc(BasicBlock *BB, MachineInstr* I, Value* cond_val, int64_t off)
 {
-  std::stringstream true_bb_name;
-  true_bb_name << "bb_" << (Dec->getDisassembler()->getDebugOffset(I->getDebugLoc())+ I->getDesc().getSize() + off);
-  BasicBlock* true_bb  = Dec->getOrCreateBasicBlock(true_bb_name.str(), BB->getParent());
-  std::stringstream false_bb_name;
-  false_bb_name << "bb_" << (Dec->getDisassembler()->getDebugOffset(I->getDebugLoc())+ I->getDesc().getSize());
-  BasicBlock* false_bb  = Dec->getOrCreateBasicBlock(false_bb_name.str(), BB->getParent());
-  IRB->CreateCondBr(cond_val, true_bb, false_bb);
+  uint64_t true_target = Dec->getDisassembler()->getDebugOffset(I->getDebugLoc()) + I->getDesc().getSize() + off;
+  Value* true_target_val = get_imm_val(true_target, 64, 64);
+  uint64_t false_target = Dec->getDisassembler()->getDebugOffset(I->getDebugLoc())+ I->getDesc().getSize();
+  Value* false_target_val = get_imm_val(false_target, 64, 64);
+  IRB->CreateCall(BB->getParent()->getParent()->getFunction("saib_branch"), std::vector<Value*>({true_target_val, false_target_val, cond_val}));
 }
 
 // CF=0 and ZF=0
