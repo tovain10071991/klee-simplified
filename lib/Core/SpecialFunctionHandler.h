@@ -137,6 +137,10 @@ namespace klee {
     HANDLER(handleMulOverflow);
     HANDLER(handleSubOverflow);
     HANDLER(handleDivRemOverflow);
+    
+    HANDLER(handleSaibCall);
+    HANDLER(handleSaibCollectIndirect);
+    HANDLER(handleSaibSyscall);
 #undef HANDLER
   };
 } // End klee namespace

@@ -20,6 +20,7 @@
 #include "klee/Internal/Module/InstructionInfoTable.h"
 #include "klee/Internal/Support/Debug.h"
 #include "klee/Internal/Support/ModuleUtil.h"
+#include "../lib/Core/Executor.h"
 
 #include "llvm/Bitcode/ReaderWriter.h"
 #if LLVM_VERSION_CODE >= LLVM_VERSION(3, 3)
@@ -57,6 +58,8 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 
 #include <sstream>
+
+#include "Helper/DecompileHelper.h"
 
 using namespace llvm;
 using namespace klee;
@@ -98,11 +101,6 @@ namespace {
                               cl::desc("Print functions whose address is taken."));
 }
 
-namespace klee {
-  std::map<uint64_t, KInstruction*> addr_inst_set;
-  std::map<KInstruction*, uint64_t> inst_addr_set;
-}
-
 KModule::KModule(Module *_module) 
   : module(_module),
     targetData(new DataLayout(module)),
@@ -110,8 +108,6 @@ KModule::KModule(Module *_module)
 }
 
 KModule::~KModule() {
-  delete[] constantTable;
-
   for (std::map<llvm::Constant*, KConstant*>::iterator it=constantMap.begin(),
       itE=constantMap.end(); it!=itE;++it)
     delete it->second;
@@ -160,15 +156,26 @@ void KModule::prepare(const Interpreter::ModuleOptions &opts,
 
     KFunction *kf = new KFunction(it, this);
     
+    kfunction = kf;
     functionMap.insert(std::make_pair(it, kf));
   }
 }
 
-void KModule::addInfo(Instruction* inst) {
-  info->addInfo(inst);
-  functions[0]->addInfo(inst);
-  KInstruction *ki = kf->instructions[kf->numInstructions-1];
-  ki->info = &infos->getInfo(ki->inst);
+uint64_t get_inst_idx(Instruction* inst)
+{
+  return idx_count++;
+}
+
+void KModule::addInfo() {
+  Instruction* inst = idx_inst_set[idx_count-1]->inst;
+  inst = inst->getNextNode();
+  Instruction& end_inst = inst->getParent()->back();
+  while(1) {
+    kfunction->addInfo(inst, this);
+    if(inst == &end_inst)
+      break;
+    inst = inst->getNextNode();
+  }
 }
 
 KConstant* KModule::getKConstant(Constant *c) {
@@ -187,6 +194,12 @@ unsigned KModule::getConstantID(Constant *c, KInstruction* ki) {
   kc = new KConstant(c, id, ki);
   constantMap.insert(std::make_pair(c, kc));
   constants.push_back(c);
+  if(after_run)
+  {
+    Cell cell;
+    cell.value = executor->evalConstant(c);
+    constantTable.push_back(cell);
+  }
   return id;
 }
 
@@ -214,14 +227,23 @@ static int getOperandNum(Value *v,
   } else {
     assert(isa<Constant>(v));
     Constant *c = cast<Constant>(v);
+    if(GlobalVariable* gv = dyn_cast<GlobalVariable>(c))
+    {
+      if(gv->isDeclaration())
+      {
+        gv = km->module->getGlobalVariable(gv->getName());
+        assert(gv && !gv->isDeclaration());
+        c = gv;
+      }
+    }
+    else if(Function* func = dyn_cast<Function>(c))
+    {
+      std::string name = func->getName().data();
+      c = km->module->getFunction(name);
+      assert(c);
+    }
     return -(km->getConstantID(c, ki) + 2);
   }
-}
-
-uint64_t addr_count = 1;
-uint64_t get_inst_addr(Instruction* inst)
-{
-  return addr_count++;
 }
 
 KFunction::KFunction(llvm::Function *_function,
@@ -231,68 +253,47 @@ KFunction::KFunction(llvm::Function *_function,
     numInstructions(0) {
   for (llvm::Function::iterator bbit = function->begin(), 
          bbie = function->end(); bbit != bbie; ++bbit) {
-    BasicBlock *bb = bbit;
-    basicBlockEntry[bb] = numInstructions;
-    numInstructions += bb->size();
-  }
-
-  std::map<Instruction*, unsigned> registerMap;
-
-  // The first arg_size() registers are reserved for formals.
-  unsigned rnum = numArgs;
-  for (llvm::Function::iterator bbit = function->begin(), 
-         bbie = function->end(); bbit != bbie; ++bbit) {
-    for (llvm::BasicBlock::iterator it = bbit->begin(), ie = bbit->end();
-         it != ie; ++it)
-      registerMap[it] = rnum++;
-  }
-  numRegisters = rnum;
-  
-  unsigned i = 0;
-  for (llvm::Function::iterator bbit = function->begin(), 
-         bbie = function->end(); bbit != bbie; ++bbit) {
-    for (llvm::BasicBlock::iterator it = bbit->begin(), ie = bbit->end();
-         it != ie; ++it) {
-      KInstruction *ki;
-
-      switch(it->getOpcode()) {
-      case Instruction::GetElementPtr:
-      case Instruction::InsertValue:
-      case Instruction::ExtractValue:
-        ki = new KGEPInstruction(); break;
-      default:
-        ki = new KInstruction(); break;
-      }
-
-      ki->inst = it;      
-      ki->dest = registerMap[it];
-
-      if (isa<CallInst>(it) || isa<InvokeInst>(it)) {
-        CallSite cs(it);
-        unsigned numArgs = cs.arg_size();
-        ki->operands = new int[numArgs+1];
-        ki->operands[0] = getOperandNum(cs.getCalledValue(), registerMap, km,
-                                        ki);
-        for (unsigned j=0; j<numArgs; j++) {
-          Value *v = cs.getArgument(j);
-          ki->operands[j+1] = getOperandNum(v, registerMap, km, ki);
-        }
-      } else {
-        unsigned numOperands = it->getNumOperands();
-        ki->operands = new int[numOperands];
-        for (unsigned j=0; j<numOperands; j++) {
-          Value *v = it->getOperand(j);
-          ki->operands[j] = getOperandNum(v, registerMap, km, ki);
-        }
-      }
-
-      instructions.push_back(ki);
-      uint64_t addr = get_inst_addr(ki->inst);
-      inst_addr_set[ki] = addr;
-      addr_inst_set[addr] = ki;
+    llvm::BasicBlock::iterator it = bbit->begin();
+    for (llvm::BasicBlock::iterator ie = bbit->end(); it != ie; ++it) {
+      addInfo(&*it, km);
     }
   }
+}
+
+static std::map<Instruction*, unsigned> registerMap;
+static unsigned register_count = 0;
+
+void KFunction::addInfo(Instruction* inst, KModule* km) {
+  numInstructions++;
+  registerMap[inst] = register_count++;
+  KInstruction *ki = new KInstruction();
+  
+  ki->inst = inst;
+  ki->dest = registerMap[inst];
+
+  if (isa<CallInst>(inst) || isa<InvokeInst>(inst)) {
+    CallSite cs(inst);
+    unsigned numArgs = cs.arg_size();
+    ki->operands = new int[numArgs+1];
+    ki->operands[0] = getOperandNum(cs.getCalledValue(), registerMap, km,
+                                    ki);
+    for (unsigned j=0; j<numArgs; j++) {
+      Value *v = cs.getArgument(j);
+      ki->operands[j+1] = getOperandNum(v, registerMap, km, ki);
+    }
+  } else {
+    unsigned numOperands = inst->getNumOperands();
+    ki->operands = new int[numOperands];
+    for (unsigned j=0; j<numOperands; j++) {
+      Value *v = inst->getOperand(j);
+      ki->operands[j] = getOperandNum(v, registerMap, km, ki);
+    }
+  }
+
   instructions.push_back(ki);
+  uint64_t idx = get_inst_idx(ki->inst);
+  inst_idx_set[ki] = idx;
+  idx_inst_set[idx] = ki;
 }
 
 KFunction::~KFunction() {

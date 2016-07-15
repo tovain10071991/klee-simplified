@@ -7,6 +7,7 @@
 #include "CodeInv/MCDirector.h"
 
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Object/ObjectFile.h"
@@ -20,9 +21,13 @@
 #include <string>
 #include <err.h>
 
+#include "klee/Internal/Module/KModule.h"
+#include "klee/Internal/Module/KInstruction.h"
+
 using namespace std;
 using namespace fracture;
 using namespace llvm;
+using namespace klee;
 
 static map<unsigned long, Disassembler*> disassemblers;
 // static map<unsigned long, Decompiler*> decompilers;
@@ -97,12 +102,47 @@ Decompiler* get_decompiler(unsigned long addr)
     object::ObjectFile* obj = get_object(addr);
     disassemblers[base] = new Disassembler(mcd, obj, NULL, outs(), outs());
   }
-  Decompiler* decompiler = new Decompiler(disassemblers[base], NULL, nulls(), nulls());
+  Decompiler* decompiler = new Decompiler(disassemblers[base], module, nulls(), nulls());
   return decompiler;
 }
 
-static map<uint64_t, MachineFunction*> mfuncs;
-static map<uint64_t, MachineBasicBlock*> mbbs;
+static MachineFunction* MF;
+static MachineBasicBlock* MBB;
+static BasicBlock* BB;
+static Function* F;
+
+map<Instruction*, uint64_t> inst_addr_set;
+map<uint64_t, Instruction*> addr_inst_set;
+map<uint64_t, uint64_t> addr_idx_set;
+map<uint64_t, KInstruction*> idx_inst_set;
+map<KInstruction*, uint64_t> inst_idx_set;
+uint64_t idx_count = 1;
+map<uint64_t, uint64_t> addr_size_set;
+
+void decompile_inst(uint64_t addr)
+{
+  Decompiler* decompiler = get_decompiler(addr);
+  decompiler->getDisassembler()->decodeInstruction(get_unload_addr(addr),
+  MBB);
+  MachineInstr& I = MBB->back();
+  decompiler->getEmitter()->EmitIR(BB, &I);
+  
+  Instruction* inst = module->begin()->begin()->getFirstNonPHI();
+  if(idx_count!=1)
+  {
+    inst = idx_inst_set[idx_count-1]->inst;
+    inst = inst->getNextNode();
+  }
+  Instruction& end_inst = module->begin()->begin()->back();
+  addr_idx_set[decompiler->getDisassembler()->getDebugOffset(inst->getDebugLoc())] = idx_count;
+  addr_size_set[addr] = I.getDesc().getSize();
+  while(1) {
+    inst_addr_set[inst] = addr;
+    if(inst == &end_inst)
+      break;
+    inst = inst->getNextNode();
+  }
+}
 
 Function* get_first_func(unsigned long addr)
 {
@@ -123,7 +163,27 @@ Function* get_first_func(unsigned long addr)
 
 Function* get_first_func(string func_name)
 {
-  return dyn_cast<Function>(module->getOrInsertFunction(func_name, FunctionType::get(Type::getVoidTy(*(mcd->getContext())), false)));
+  Decompiler* decompiler = get_decompiler(get_addr(func_name));  
+  
+  F = dyn_cast<Function>(module->getOrInsertFunction(func_name, FunctionType::get(Type::getVoidTy(*(mcd->getContext())), false)));
+  
+  unsigned func_unload_addr = (unsigned)get_unload_addr(get_addr(func_name));
+  assert(func_unload_addr==get_unload_addr(get_addr(func_name)));
+  MF = decompiler->getDisassembler()->getOrCreateFunction(func_unload_addr);
+  
+  std::stringstream MBBName;
+  MBBName << "entry";
+
+  // Dummy holds the name.
+  BasicBlock *Dummy = BasicBlock::Create(*mcd->getContext(), MBBName.str());
+  MBB = MF->CreateMachineBasicBlock(Dummy);
+  MF->push_back(MBB);
+  
+  BB = decompiler->getOrCreateBasicBlock(MBB->getName(), F);
+  
+  decompile_inst(get_addr(func_name));
+  
+  return F;
 }
 
 Module* get_module_with_function(unsigned long addr)
@@ -143,10 +203,3 @@ Module* get_module_with_function(string func_name)
     return NULL;
   return get_module_with_function(addr);
 }
-/*
-void decompile_inst(uint64_t addr)
-{
-  Decompiler* decompiler = get_decompiler(addr);
-  decompiler->getDisassembler()->decodeInstruction(get_unload_addr(addr),
-  mbb);
-}*/

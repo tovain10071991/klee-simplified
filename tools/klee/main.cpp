@@ -718,8 +718,6 @@ int main(int argc, char **argv, char **envp) {
 
   parseArguments(argc, argv);
 
-  sys::SetInterruptFunction(interrupt_handle);
-
   std::string LibraryDir = KleeHandler::getRunTimeLibraryPath(argv[0]);
   Interpreter::ModuleOptions Opts(LibraryDir.c_str(),
                                   /*Optimize=*/OptimizeModule,

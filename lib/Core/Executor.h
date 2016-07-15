@@ -211,6 +211,7 @@ private:
   void transferToBasicBlock(llvm::BasicBlock *dst, 
 			    llvm::BasicBlock *src,
 			    ExecutionState &state);
+  void transferToBasicBlockByAddr(uint64_t inst_addr, ExecutionState &state);
 
   void callExternalFunction(ExecutionState &state,
                             KInstruction *target,
@@ -473,7 +474,8 @@ public:
 
   Expr::Width getWidthForLLVMType(LLVM_TYPE_Q llvm::Type *type) const;
 };
-  
+
+extern bool after_run;
 } // End klee namespace
 
 #endif

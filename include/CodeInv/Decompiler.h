@@ -76,9 +76,10 @@ public:
 
   uint64_t getBasicBlockAddress(BasicBlock *BB);
 
-  const Disassembler* getDisassembler() const { return Dis; }
+  Disassembler* getDisassembler() const { return Dis; }
   Module* getModule() { return Mod; }
   LLVMContext *getContext() {return Context;}
+  IREmitter* getEmitter() {return Emitter;}
 
   Function* getFunctionByAddr(uint64_t addr);
 private:

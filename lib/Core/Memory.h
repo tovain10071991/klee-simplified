@@ -14,6 +14,7 @@
 #include "klee/Expr.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/BitVector.h"
 
 #include <vector>
 #include <string>
@@ -37,7 +38,7 @@ class MemoryObject {
 private:
   static int counter;
   mutable unsigned refCount;
-
+  
 public:
   unsigned id;
   uint64_t address;
@@ -67,6 +68,8 @@ public:
   /// should sensibly be only at creation time).
   mutable std::vector< ref<Expr> > cexPreferences;
 
+  llvm::BitVector lazy_populate;
+
   // DO NOT IMPLEMENT
   MemoryObject(const MemoryObject &b);
   MemoryObject &operator=(const MemoryObject &b);
@@ -81,6 +84,7 @@ public:
       size(0),
       isFixed(true),
       parent(NULL),
+      lazy_populate(size, true),
       allocSite(0) {
   }
 
@@ -99,6 +103,7 @@ public:
       fake_object(false),
       isUserSpecified(false),
       parent(_parent), 
+      lazy_populate(size, true),
       allocSite(_allocSite) {
   }
 
@@ -195,9 +200,9 @@ public:
   // make contents all concrete and random
   void initializeToRandom();
 
-  ref<Expr> read(ref<Expr> offset, Expr::Width width) const;
-  ref<Expr> read(unsigned offset, Expr::Width width) const;
-  ref<Expr> read8(unsigned offset) const;
+  ref<Expr> read(ref<Expr> offset, Expr::Width width);
+  ref<Expr> read(unsigned offset, Expr::Width width);
+  ref<Expr> read8(unsigned offset);
 
   // return bytes written.
   void write(unsigned offset, ref<Expr> value);
@@ -215,13 +220,13 @@ private:
 
   void makeSymbolic();
 
-  ref<Expr> read8(ref<Expr> offset) const;
+  ref<Expr> read8(ref<Expr> offset);
   void write8(unsigned offset, ref<Expr> value);
   void write8(ref<Expr> offset, ref<Expr> value);
 
-  void fastRangeCheckOffset(ref<Expr> offset, unsigned *base_r, 
+  void fastRangeCheckOffset(ref<Expr> offset, unsigned long *base_r, 
                             unsigned *size_r) const;
-  void flushRangeForRead(unsigned rangeBase, unsigned rangeSize) const;
+  void flushRangeForRead(unsigned rangeBase, unsigned rangeSize);
   void flushRangeForWrite(unsigned rangeBase, unsigned rangeSize);
 
   bool isByteConcrete(unsigned offset) const;
@@ -234,8 +239,9 @@ private:
   void markByteUnflushed(unsigned offset);
   void setKnownSymbolic(unsigned offset, Expr *value);
 
-  void print();
   ArrayCache *getArrayCache() const;
+public:
+  void print();
 };
   
 } // End klee namespace

@@ -30,7 +30,13 @@
 #endif
 #include "llvm/ADT/Twine.h"
 
+#include <sys/syscall.h>
+#include <err.h>
 #include <errno.h>
+#include <string>
+
+#include "Helper/DecompileHelper.h"
+#include "Helper/LLDBHelper.h"
 
 using namespace llvm;
 using namespace klee;
@@ -131,6 +137,10 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("__ubsan_handle_sub_overflow", handleSubOverflow, false),
   add("__ubsan_handle_mul_overflow", handleMulOverflow, false),
   add("__ubsan_handle_divrem_overflow", handleDivRemOverflow, false),
+
+  add("saib_call", handleSaibCall, false),
+  add("saib_collect_indirect", handleSaibCollectIndirect, false),
+  add("saib_syscall", handleSaibSyscall, true),
 
 #undef addDNR
 #undef add  
@@ -254,7 +264,7 @@ SpecialFunctionHandler::readStringAtAddress(ExecutionState &state,
 
   unsigned i;
   for (i = 0; i < mo->size - 1; i++) {
-    ref<Expr> cur = os->read8(i);
+    ref<Expr> cur = const_cast<ObjectState*>(os)->read8(i);
     cur = executor.toUnique(state, cur);
     assert(isa<ConstantExpr>(cur) && 
            "hit symbolic char while reading concrete string");
@@ -667,7 +677,7 @@ void SpecialFunctionHandler::handleDefineFixedObject(ExecutionState &state,
   
   uint64_t address = cast<ConstantExpr>(arguments[0])->getZExtValue();
   uint64_t size = cast<ConstantExpr>(arguments[1])->getZExtValue();
-  MemoryObject *mo = executor.memory->allocateFixed(address, size, addr_inst_set[state.prevPC]->inst);
+  MemoryObject *mo = executor.memory->allocateFixed(address, size, idx_inst_set[state.prevPC]->inst);
   executor.bindObjectInState(state, mo, false);
   mo->isUserSpecified = true; // XXX hack;
 }
@@ -773,4 +783,25 @@ void SpecialFunctionHandler::handleDivRemOverflow(ExecutionState &state,
   executor.terminateStateOnError(state,
                                  "overflow on division or remainder",
                                  "overflow.err");
+}
+
+std::map<uint64_t, std::set<uint64_t> > indirect_call_set;
+
+void SpecialFunctionHandler::handleSaibCall(ExecutionState &state,
+                                               KInstruction *target,
+                                               std::vector<ref<Expr> > &arguments) {
+  assert(0);
+}
+
+
+void SpecialFunctionHandler::handleSaibCollectIndirect(ExecutionState &state,
+                                               KInstruction *target,
+                                               std::vector<ref<Expr> > &arguments) {
+  assert(0);
+}
+
+void SpecialFunctionHandler::handleSaibSyscall(ExecutionState &state,
+                                               KInstruction *target,
+                                               std::vector<ref<Expr> > &arguments) {
+  assert(0);
 }

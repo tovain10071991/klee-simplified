@@ -32,6 +32,8 @@
 #include <set>
 #include <stdarg.h>
 
+#include "Helper/DecompileHelper.h"
+
 using namespace llvm;
 using namespace klee;
 
@@ -62,7 +64,7 @@ StackFrame::~StackFrame() {
 /***/
 
 ExecutionState::ExecutionState(KFunction *kf) :
-    pc(inst_addr_set[kf->instructions[0]]),
+    pc(inst_idx_set[kf->instructions[0]]),
     prevPC(pc),
 
     queryCost(0.), 
