@@ -1,0 +1,1 @@
+visitDispatchers[X86::IMUL32r] = &IREmitter::visitIMUL32r;

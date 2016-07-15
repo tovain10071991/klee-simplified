@@ -107,12 +107,15 @@
 #include <errno.h>
 #include <cxxabi.h>
 
+#include "Helper/MapsHelper.h"
+#include "Helper/ptraceHelper.h"
+
 using namespace llvm;
 using namespace klee;
 
 
 
-
+bool after_run = false;
 
 namespace {
   cl::opt<bool>
@@ -317,7 +320,7 @@ Module *Executor::setModule(llvm::Module *module,
                                   const ModuleOptions &opts) {
   assert(!kmodule && module && "can only register one module"); // XXX gross
   
-  kmodule = new KModule(module);
+  kmodule = new KModule(module, this);
 
   // Initialize the context.
   DataLayout *TD = kmodule->targetData;
@@ -461,6 +464,7 @@ void Executor::initializeGlobals(ExecutionState &state) {
     if (!mo)
       llvm::report_fatal_error("out of memory");
     ObjectState *os = bindObjectInState(state, mo, false);
+    mo->setName(i->getName().data());
     globalObjects.insert(std::make_pair(i, mo));
     globalAddresses.insert(std::make_pair(i, mo->getBaseExpr()));
 
@@ -470,7 +474,19 @@ void Executor::initializeGlobals(ExecutionState &state) {
       assert(os);
       ObjectState *wos = state.addressSpace.getWriteable(mo, os);
       
-      initializeGlobalObject(state, wos, i->getInitializer(), 0);
+      void* buf = calloc(1, 64);
+      unsigned size = 0;
+      if(get_reg(i->getName(), buf, 64, size))
+      {
+        assert(size<=64);
+        IntegerType* value_type = dyn_cast<IntegerType>(dyn_cast<PointerType>(i->getType())->getElementType());
+        assert(value_type->getBitWidth()<=size*8);
+        APInt value(value_type->getBitWidth(), ArrayRef<uint64_t>((uint64_t*)buf, (value_type->getBitWidth()+63)/64));
+        initializeGlobalObject(state, wos, ConstantInt::get(value_type, value), 0);
+      }
+      else
+        initializeGlobalObject(state, wos, i->getInitializer(), 0);
+      free(buf);
     }
     else
       os->initializeToRandom();
@@ -981,6 +997,8 @@ void Executor::executeCall(ExecutionState &state,
                            Function *f,
                            std::vector< ref<Expr> > &arguments) {
   Instruction *i = ki->inst;
+  assert(specialFunctionHandler->handle(state, f, ki, arguments));
+  return;
   if (f && f->isDeclaration()) {
     switch(f->getIntrinsicID()) {
     case Intrinsic::not_intrinsic:
@@ -1229,6 +1247,8 @@ static inline const llvm::fltSemantics * fpWidthToSemantics(unsigned width) {
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
+  llvm::errs() << "==========interprete inst==========\n";
+  i->dump();
   switch (i->getOpcode()) {
     // Control flow
   case Instruction::Ret: {
@@ -1282,6 +1302,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
           }
 
           bindLocal(addr_inst_set[kcaller], state, result);
+          llvm::errs() << "=====return value=====\n";
+          result->dump();
+          llvm::errs() << "\n";
         }
       } else {
         // We check that the return value has no users instead of
@@ -1303,6 +1326,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       assert(bi->getCondition() == bi->getOperand(0) &&
              "Wrong operand index!");
       ref<Expr> cond = eval(ki, 0, state).value;
+      llvm::errs() << "=====condition value=====\n";
+      cond->dump();
+      llvm::errs() << "\n";
       Executor::StatePair branches = fork(state, cond, false);
 
       if (branches.first)
@@ -1315,9 +1341,15 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   case Instruction::Switch: {
     SwitchInst *si = cast<SwitchInst>(i);
     ref<Expr> cond = eval(ki, 0, state).value;
+    llvm::errs() << "=====condition value=====\n";
+    cond->dump();
+    llvm::errs() << "\n";
     BasicBlock *bb = si->getParent();
 
     cond = toUnique(state, cond);
+    llvm::errs() << "=====condition value after toUnique=====\n";
+    cond->dump();
+    llvm::errs() << "\n";
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(cond)) {
       // Somewhat gross to create these all the time, but fine till we
       // switch to an internal rep.
@@ -1451,6 +1483,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     unsigned numArgs = cs.arg_size();
     Value *fp = cs.getCalledValue();
+    llvm::errs() << "=====called value=====\n";
+    fp->dump();
+    llvm::errs() << "\n";
     Function *f = getTargetFunction(fp, state);
 
     // evaluate arguments
@@ -1505,7 +1540,12 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
       executeCall(state, ki, f, arguments);
     } else {
+      i->dump();
+      llvm::errs() << "\n";
       ref<Expr> v = eval(ki, 0, state).value;
+      llvm::errs() << "=====called value after eval=====\n";
+      v->dump();
+      llvm::errs() << "\n";
 
       ExecutionState *free = &state;
       bool hasInvalid = false, first = true;
@@ -1517,12 +1557,18 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         ref<ConstantExpr> value;
         bool success = solver->getValue(*free, v, value);
         assert(success && "FIXME: Unhandled solver failure");
+        llvm::errs() << "=====called value after getValue=====\n";
+        value->dump();
+        llvm::errs() << "\n";
         (void) success;
         StatePair res = fork(*free, EqExpr::create(v, value), true);
         if (res.first) {
           uint64_t addr = value->getZExtValue();
           if (legalFunctions.count(addr)) {
             f = (Function*) addr;
+            llvm::errs() << "=====found legal funtion=====\n";
+            f->dump();
+            llvm::errs() << "\n";
 
             // Don't give warning on unique resolution
             if (res.second || !first)
@@ -1552,6 +1598,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = eval(ki, state.incomingBBIndex * 2, state).value;
 #endif
     bindLocal(ki, state, result);
+    llvm::errs() << "=====result value=====\n";
+    result->dump();
+    llvm::errs() << "\n";
     break;
   }
 
@@ -1562,6 +1611,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> fExpr = eval(ki, 2, state).value;
     ref<Expr> result = SelectExpr::create(cond, tExpr, fExpr);
     bindLocal(ki, state, result);
+    llvm::errs() << "=====result value=====\n";
+    result->dump();
+    llvm::errs() << "\n";
     break;
   }
 
@@ -1574,14 +1626,22 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   case Instruction::Add: {
     ref<Expr> left = eval(ki, 0, state).value;
     ref<Expr> right = eval(ki, 1, state).value;
-    bindLocal(ki, state, AddExpr::create(left, right));
+    ref<Expr> result = AddExpr::create(left, right);
+    bindLocal(ki, state, result);
+    llvm::errs() << "=====result value=====\n";
+    result->dump();
+    llvm::errs() << "\n";
     break;
   }
 
   case Instruction::Sub: {
     ref<Expr> left = eval(ki, 0, state).value;
     ref<Expr> right = eval(ki, 1, state).value;
-    bindLocal(ki, state, SubExpr::create(left, right));
+    ref<Expr> result = SubExpr::create(left, right);
+    bindLocal(ki, state, result);
+    llvm::errs() << "=====result value=====\n";
+    result->dump();
+    llvm::errs() << "\n";
     break;
   }
  
@@ -1776,7 +1836,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       count = Expr::createZExtToPointerWidth(count);
       size = MulExpr::create(size, count);
     }
-    executeAlloc(state, size, true, ki);
+    bool isLocal = i->getOpcode()==Instruction::Alloca;
+    executeAlloc(state, size, isLocal, ki);
     break;
   }
 
@@ -2282,7 +2343,7 @@ void Executor::computeOffsets(KGEPInstruction *kgepi, TypeIt ib, TypeIt ie) {
 }
 
 void Executor::bindModuleConstants() {
-  kmodule->constantTable = new Cell[kmodule->constants.size()];
+  kmodule->constantTable.resize(kmodule->constants.size());
   for (unsigned i=0; i<kmodule->constants.size(); ++i) {
     Cell &c = kmodule->constantTable[i];
     c.value = evalConstant(kmodule->constants[i]);
@@ -2305,7 +2366,7 @@ void Executor::doDumpStates() {
 
 void Executor::run(ExecutionState &initialState) {
   bindModuleConstants();
-
+  after_run = true;
   // Delay init till now so that ticks don't accrue during
   // optimization and such.
   initTimers();
@@ -2434,7 +2495,8 @@ void Executor::callExternalFunction(ExecutionState &state,
                                     KInstruction *target,
                                     Function *function,
                                     std::vector< ref<Expr> > &arguments) {
-  // check if specialFunctionHandler wants it
+  assert(0);
+/*  // check if specialFunctionHandler wants it
   if (specialFunctionHandler->handle(state, function, target, arguments))
     return;
   
@@ -2514,7 +2576,7 @@ void Executor::callExternalFunction(ExecutionState &state,
     ref<Expr> e = ConstantExpr::fromMemory((void*) args, 
                                            getWidthForLLVMType(resultType));
     bindLocal(target, state, e);
-  }
+  }*/
 }
 
 /***/
@@ -2588,7 +2650,7 @@ void Executor::executeAlloc(ExecutionState &state,
       if (reallocFrom) {
         unsigned count = std::min(reallocFrom->size, os->size);
         for (unsigned i=0; i<count; i++)
-          os->write(i, reallocFrom->read8(i));
+          os->write(i, const_cast<ObjectState*>(reallocFrom)->read8(i));
         state.addressSpace.unbindObject(reallocFrom->getObject());
       }
     }
@@ -2795,9 +2857,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         } else {
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
           wos->write(offset, value);
+          if(value->from_extern)
+            executeMakeSymbolic(state, mo, std::string("noname"));
         }          
       } else {
-        ref<Expr> result = os->read(offset, type);
+        ref<Expr> result = const_cast<ObjectState*>(os)->read(mo->getOffsetExpr(address), type);
         
         if (interpreterOpts.MakeConcreteSymbolic)
           result = replaceReadWithSymbolic(state, result);
@@ -2841,7 +2905,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           wos->write(mo->getOffsetExpr(address), value);
         }
       } else {
-        ref<Expr> result = os->read(mo->getOffsetExpr(address), type);
+         ref<Expr> result = const_cast<ObjectState*>(os)->read(mo->getOffsetExpr(address), type);
         bindLocal(target, *bound, result);
       }
     }

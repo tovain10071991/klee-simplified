@@ -1,0 +1,1 @@
+declare_visit(IMUL32r);

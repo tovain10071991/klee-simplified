@@ -84,6 +84,7 @@ namespace klee {
   class KModule {
   public:
     llvm::Module *module;
+    Executor* executor;
 #if LLVM_VERSION_CODE <= LLVM_VERSION(3, 1)
     llvm::TargetData *targetData;
 #else
@@ -97,10 +98,10 @@ namespace klee {
     std::map<llvm::Constant*, KConstant*> constantMap;
     KConstant* getKConstant(llvm::Constant *c);
 
-    Cell *constantTable;
+    std::vector<Cell> constantTable;
     
   public:
-    KModule(llvm::Module *_module);
+    KModule(llvm::Module *_module, Executor* _executor);
     ~KModule();
 
     /// Initialize local data structures.

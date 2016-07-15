@@ -20,6 +20,7 @@
 #include "klee/Internal/Module/InstructionInfoTable.h"
 #include "klee/Internal/Support/Debug.h"
 #include "klee/Internal/Support/ModuleUtil.h"
+#include "../lib/Core/Executor.h"
 
 #include "llvm/Bitcode/ReaderWriter.h"
 #if LLVM_VERSION_CODE >= LLVM_VERSION(3, 3)
@@ -57,6 +58,9 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 
 #include <sstream>
+
+#include <Helper/DecompileHelper.h>
+#include <Helper/LLDBHelper.h>
 
 using namespace llvm;
 using namespace klee;
@@ -103,14 +107,15 @@ namespace klee {
   std::map<KInstruction*, uint64_t> inst_addr_set;
 }
 
-KModule::KModule(Module *_module) 
+KModule::KModule(Module *_module, Executor* _executor) 
   : module(_module),
+    executor(_executor),
     targetData(new DataLayout(module)),
     constantTable(0) {
 }
 
 KModule::~KModule() {
-  delete[] constantTable;
+  // delete[] constantTable;
 
   for (std::map<llvm::Constant*, KConstant*>::iterator it=constantMap.begin(),
       itE=constantMap.end(); it!=itE;++it)
@@ -180,6 +185,12 @@ unsigned KModule::getConstantID(Constant *c, KInstruction* ki) {
   kc = new KConstant(c, id, ki);
   constantMap.insert(std::make_pair(c, kc));
   constants.push_back(c);
+  if(after_run)
+  {
+    Cell cell;
+    cell.value = executor->evalConstant(c);
+    constantTable.push_back(cell);
+  }
   return id;
 }
 
